@@ -1,8 +1,12 @@
 package org.apache.ignite.internal.processors.cache.distributed.constraint;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -10,6 +14,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import javax.cache.Cache;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
@@ -21,6 +27,7 @@ import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
+import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTxPrepareRequest;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxFinishRequest;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxPrepareRequest;
@@ -31,6 +38,7 @@ import org.apache.ignite.spi.communication.tcp.TcpCommunicationSpi;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.spi.eventstorage.memory.MemoryEventStorageSpi;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.apache.ignite.testframework.junits.common.TypePartitionForKey;
 import org.apache.ignite.testframework.junits.multijvm.IgniteProcessProxy;
 import org.apache.ignite.transactions.Transaction;
 import org.apache.ignite.transactions.TransactionConcurrency;
@@ -144,6 +152,31 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
         return ccfg;
     }
 
+    /**
+     * Получение пары списков ключей для двух кэшей так, чтобы они мапились на разные узлы.
+     */
+    @Test
+    public void gettingKeyWithDifferentCacheAndNode () {
+        final IgniteEx server0 = grid(0);
+        final IgniteEx server1 = grid(1);
+
+        final IgniteCache<Long, AccountB> cacheA = server0.cache(CACHE_NAME_A);
+        final IgniteCache<Long, AccountB> cacheB = server0.cache(CACHE_NAME_B);
+
+        int cntKeys = 100;
+        final Set<Integer> integerSet0 = new HashSet<>(findKeys(server0.localNode(), cacheA, cntKeys, 0, TypePartitionForKey.PRIMARY));
+        final Set<Integer> integerSet1 = new HashSet<>(findKeys(server1.localNode(), cacheB, cntKeys, 0, TypePartitionForKey.PRIMARY));
+
+        assertTrue(integerList0.size() > 0);
+        assertTrue(integerList1.size() > 0);
+        assertEquals(integerList1.size(), integerList1.size());
+
+        final Set<Integer> setKeys = Stream.concat(integerList0.stream(), integerList1.stream())
+            .collect(Collectors.toSet());
+
+        assertEquals(cntKeys * 2, setKeys.size());
+    }
+
     @Test
     public void blockTransactionMessage() throws Exception {
         client = true;
@@ -154,7 +187,7 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
         final IgniteEx ignite0 = ignite(0);
         //todo посмотреть primaryKeys()
 
-        for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < 1; i++) {
             int clientNumber = i;
 
             if(!isRunTest) break;
@@ -166,7 +199,7 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
                     final IgniteEx client = startGrid(getConfiguration(clientName));
                     /*NearTxFinishFuture*/
 
-                    TestRecordingCommunicationSpi.spi(ignite0).blockMessages((node, message) -> {
+                    TestRecordingCommunicationSpi.spi(client).blockMessages((node, message) -> {
                         log.info("Block message: " + message + " : " + node);
 
                         if(nodeForBlockMessage.contains(node.id()) &&
