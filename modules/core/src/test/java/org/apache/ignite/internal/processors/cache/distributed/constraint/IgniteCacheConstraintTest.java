@@ -1,8 +1,6 @@
 package org.apache.ignite.internal.processors.cache.distributed.constraint;
 
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -14,27 +12,24 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.cache.Cache;
-import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cache.CachePeekMode;
 import org.apache.ignite.cache.affinity.Affinity;
-import org.apache.ignite.cache.query.SqlFieldsQuery;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
-import org.apache.ignite.internal.processors.cache.IgniteInternalCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTxPrepareRequest;
-import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxFinishRequest;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxPrepareRequest;
-import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxPrepareResponse;
-import org.apache.ignite.internal.processors.cache.distributed.near.NearTxFinishFuture;
 import org.apache.ignite.internal.util.typedef.G;
-import org.apache.ignite.spi.communication.tcp.TcpCommunicationSpi;
+import org.apache.ignite.lang.IgniteBiPredicate;
+import org.apache.ignite.plugin.extensions.communication.Message;
 import org.apache.ignite.spi.discovery.tcp.TcpDiscoverySpi;
 import org.apache.ignite.spi.eventstorage.memory.MemoryEventStorageSpi;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
@@ -52,17 +47,17 @@ import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
 /**
  * Тесты к задаче IGN-115.
  * <p>
- * Для задержки отправки сообщений использовать {@link TestRecordingCommunicationSpi}. Пример использования {@link CacheMvccTxRecoveryTest}
+ * Для задержки отправки сообщений использовать {@link TestRecordingCommunicationSpi}. Пример использования {@link
+ * CacheMvccTxRecoveryTest}
  * <p>
  * Возможно тесты из этой задачи помогут https://issues.apache.org/jira/browse/IGNITE-5935
  */
 public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
     private static final int SRVS = 2;
     private boolean client;
-    private boolean clientDiscovery;
-    private IgniteEx igniteEx;
-    //Идентификаторы узлов на которых будут блокироваться сообщения.
-    private List<UUID> nodeForBlockMessage = new ArrayList<>();
+    private static IgniteEx server0;
+    private static IgniteEx server1;
+
     private static final String CACHE_NAME_A = "Cache_A";
     private static final String CACHE_NAME_B = "Cache_B";
     /**
@@ -79,21 +74,19 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
 
     private volatile boolean isRunTest = true;
 
-    /*IgniteCache<Long, Long> cacheA = ignite.cache(CACHE_NAME_A);
-    IgniteCache<Long, Long> cacheB = ignite.cache(CACHE_NAME_B);*/
+    private Set<Integer> keysForDifferentNode;
 
     /**
      * {@inheritDoc}
      */
     @Override protected void beforeTestsStarted() throws Exception {
-        igniteEx = startGrids(SRVS);
-        igniteEx.cluster().active(true);
-        final Iterator<ClusterNode> iterator = igniteEx.cluster().nodes().iterator();
-        for (int i = 0; i < 2; i++) {
-            nodeForBlockMessage.add(iterator.next().id());
-        }
+        final IgniteEx grids = startGrids(SRVS);
+        grids.cluster().active(true);
+        server0 = ignite(0);
+        server1 = ignite(1);
 
-        //todo G.allGrids();
+        log.info("server0: " + server0.cluster().localNode().id());
+        log.info("server1: " + server1.cluster().localNode().id());
     }
 
     @Override protected void beforeTest() throws Exception {
@@ -131,9 +124,6 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
         ((TcpDiscoverySpi)cfg.getDiscoverySpi()).setIpFinderCleanFrequency(10 * 60_000);
         ((TcpDiscoverySpi)cfg.getDiscoverySpi()).setJoinTimeout(2 * 60_000);
 
-        if (!clientDiscovery)
-            ((TcpDiscoverySpi)cfg.getDiscoverySpi()).setForceServerMode(true);
-
         cfg.setClientMode(client);
 
         cfg.setCacheConfiguration(createCacheConfig(CACHE_NAME_A), createCacheConfig(CACHE_NAME_B));
@@ -156,30 +146,37 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
      * Получение пары списков ключей для двух кэшей так, чтобы они мапились на разные узлы.
      */
     @Test
-    public void gettingKeyWithDifferentCacheAndNode () {
+    public void generateKeyWithDifferentCacheAndNode() {
         final IgniteEx server0 = grid(0);
         final IgniteEx server1 = grid(1);
 
         final IgniteCache<Long, AccountB> cacheA = server0.cache(CACHE_NAME_A);
         final IgniteCache<Long, AccountB> cacheB = server0.cache(CACHE_NAME_B);
 
-        int cntKeys = 100;
+        int cntKeys = 10_000;
         final Set<Integer> integerSet0 = new HashSet<>(findKeys(server0.localNode(), cacheA, cntKeys, 0, TypePartitionForKey.PRIMARY));
         final Set<Integer> integerSet1 = new HashSet<>(findKeys(server1.localNode(), cacheB, cntKeys, 0, TypePartitionForKey.PRIMARY));
 
-        assertTrue(integerList0.size() > 0);
-        assertTrue(integerList1.size() > 0);
-        assertEquals(integerList1.size(), integerList1.size());
+        //Удаление пересечения ключей - ключей, которые есть в обоих наборах
+        Set<Integer> keysForRemove = new HashSet<>();
+        integerSet0.forEach(key -> {
+            if (integerSet1.contains(key)) {
+                keysForRemove.add(key);
+            }
+        });
+        integerSet0.removeAll(keysForRemove);
+        integerSet1.removeAll(keysForRemove);
 
-        final Set<Integer> setKeys = Stream.concat(integerList0.stream(), integerList1.stream())
-            .collect(Collectors.toSet());
+        keysForDifferentNode = Stream.concat(integerSet0.stream(), integerSet1.stream()).collect(Collectors.toSet());
 
-        assertEquals(cntKeys * 2, setKeys.size());
+        log.info("Count of keys: " + keysForDifferentNode.size());
     }
 
     @Test
     public void blockTransactionMessage() throws Exception {
         client = true;
+
+        generateKeyWithDifferentCacheAndNode();
 
         final ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
         List<Future> futureList = new ArrayList<>();
@@ -187,68 +184,86 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
         final IgniteEx ignite0 = ignite(0);
         //todo посмотреть primaryKeys()
 
-        for (int i = 0; i < 1; i++) {
-            int clientNumber = i;
-
-            if(!isRunTest) break;
+        for (Integer key : keysForDifferentNode) {
+            if (!isRunTest)
+                break;
 
             futureList.add(executorService.submit(() -> {
-                Thread.currentThread().setName("ClientThread" + clientNumber);
+                Thread.currentThread().setName("ClientThread" + key);
+
                 try {
-                    String clientName = "MyClient" + clientNumber;
+                    String clientName = "MyClient" + key;
                     final IgniteEx client = startGrid(getConfiguration(clientName));
-                    /*NearTxFinishFuture*/
 
-                    TestRecordingCommunicationSpi.spi(client).blockMessages((node, message) -> {
-                        log.info("Block message: " + message + " : " + node);
 
-                        if(nodeForBlockMessage.contains(node.id()) &&
-                            (message instanceof GridDhtTxPrepareRequest ||
-                             message instanceof GridNearTxPrepareRequest)) {//С клиента НАВЕРНО приходит GridNearTxPrepareRequest
+                    setMessageBlocker(client, clientName);
+                    setMessageBlocker(client, clientName);
 
-                            new Thread(() -> {
-                                IgniteProcessProxy.kill(clientName);
-
-                                log.info("Process killed");
-                                log.info("Client name: " + client.name());
-                            }).start();
-
-                            return false;
-                        }
-
-                        return false;
-                    });
-
-                    addBatchAccounts(client, clientNumber);
+                    addBatchAccounts(client, key);
                 }
                 catch (Exception e) {
                     e.printStackTrace();
-                } finally {
+                }
+                finally {
                     // Т.к. произошла ошибка, то останавливаем остальные потоки
                     isRunTest = false;
                     stopExecutorService(executorService);
                 }
             }));
+
+            //todo делается один запрос
+            break;
         }
 
         for (Future future : futureList) {
             while (true) {
-                if(!isRunTest) break;
+                if (!isRunTest)
+                    break;
 
                 try {
                     future.get(10, TimeUnit.MILLISECONDS);
-                } catch (TimeoutException e) {
+                }
+                catch (TimeoutException e) {
 
                 }
             }
         }
     }
 
-    private void addBatchAccounts(IgniteEx client, int clientNumber) {
+    private void setMessageBlocker(IgniteEx client, String clientName) {
+        final Supplier<IgniteBiPredicate<ClusterNode, Message>> predicate = () -> (node, message) -> {
+            log.info("Block message:" + message.getClass().getSimpleName() + " client - : " + node.id());
+
+            /*NearTxFinishFuture*/
+            if (/*nodeForBlockMessage.contains(node.id()) &&*/
+                (message instanceof GridDhtTxPrepareRequest ||
+                    message instanceof GridNearTxPrepareRequest)) {//С клиента НАВЕРНО приходит GridNearTxPrepareRequest
+
+                new Thread(() -> {
+                    IgniteProcessProxy.kill(clientName);
+
+                    log.info("Client is killed: " + client.name());
+                }).start();
+
+                try {
+                    TimeUnit.MILLISECONDS.sleep(100);
+                }
+                catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                return false;
+            }
+
+            return false;
+        };
+
+        TestRecordingCommunicationSpi.spi(client).blockMessages(predicate.get());
+        TestRecordingCommunicationSpi.spi(server0).blockMessages(predicate.get());
+    }
+
+    private void addBatchAccounts(IgniteEx client, long key) {
         boolean isTransactionSuccess = false;
-        int rangeOfBatch = 10;//должен быть не больше количества вставляемых элементов countIteration
         int countIteration = 1;
-        long beginRange = clientNumber * rangeOfBatch;
 
         IgniteCache<Long, AccountA> cacheA = client.cache(CACHE_NAME_A);
         IgniteCache<Long, AccountB> cacheB = client.cache(CACHE_NAME_B);
@@ -256,9 +271,8 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
         try (Transaction transaction = client.transactions().txStart(TransactionConcurrency.PESSIMISTIC, TransactionIsolation.READ_COMMITTED)) {
 
             for (int i = 0; i < countIteration; i++) {
-                long objectId = beginRange + countIteration;
-                cacheA.put(objectId, new AccountA(objectId, "A_name_" + objectId, BEGIN_ACCOUNT));
-                cacheB.putIfAbsent(objectId, new AccountB(objectId, "B_name_" + objectId, 0));
+                cacheA.put(key, new AccountA(key, "A_name_" + key, BEGIN_ACCOUNT));
+                cacheB.putIfAbsent(key, new AccountB(key, "B_name_" + key, 0));
             }
 
             transaction.commit();
@@ -269,27 +283,17 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
         }
 
         if (isTransactionSuccess) {
-            assertEquals("Not correct values for client " + clientNumber, cacheA.size(CachePeekMode.PRIMARY), cacheB.size(CachePeekMode.PRIMARY));
-        } else {
-            log.error("Transaction for client '" + clientNumber + "' finished with error");
+            assertEquals("Not correct values for client " + key, cacheA.size(CachePeekMode.PRIMARY), cacheB.size(CachePeekMode.PRIMARY));
+        }
+        else {
+            log.error("Transaction for client '" + key + "' finished with error");
         }
 
         log.info("Number of grid node: " + client.cluster().nodes().size());
         log.info("Number of grid node: " + G.allGrids().size());//todo всегда возвращает 1
 
-        int countElementInCacheA = 0;
-        int countElementInCacheB = 0;
-        for (long i = beginRange; i < beginRange + countIteration; i++) {
-            if (cacheA.containsKey(beginRange)) {
-                countElementInCacheA++;
-            }
-
-            if (cacheB.containsKey(beginRange)) {
-                countElementInCacheB++;
-            }
-        }
-
-        assertEquals(countElementInCacheA, countElementInCacheB);
+        assertTrue(cacheA.containsKey(key) && cacheB.containsKey(key));
+        assertTrue(cacheA.containsKey(key));
     }
 
     private synchronized void stopExecutorService(ExecutorService executor) {
@@ -298,9 +302,11 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
             executor.shutdown();
             /*Если потоки не завершаться через указанное время, то завершить их*/
             executor.awaitTermination(6, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
+        }
+        catch (InterruptedException e) {
             System.err.println("termination interrupted");
-        } finally {
+        }
+        finally {
             if (!executor.isTerminated()) {
                 System.err.println("killing non-finished tasks");
             }
