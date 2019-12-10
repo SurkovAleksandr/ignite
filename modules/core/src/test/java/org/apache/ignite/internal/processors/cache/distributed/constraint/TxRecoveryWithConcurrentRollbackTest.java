@@ -42,7 +42,7 @@ public class TxRecoveryWithConcurrentRollbackTest extends GridCommonAbstractTest
     private int backups;
 
     /** Persistence. */
-    private boolean persistence;
+    private boolean persistence = true;
 
     /** Sync mode. */
     private CacheWriteSynchronizationMode syncMode = FULL_SYNC;
@@ -114,10 +114,10 @@ public class TxRecoveryWithConcurrentRollbackTest extends GridCommonAbstractTest
 
         final IgniteCache<Object, Object> cache = client.cache(TEST_CACHE_NAME);
 
-        final List<Integer> g0Keys = primaryKeys(grid(0).cache(TEST_CACHE_NAME), 100);
-        final List<Integer> g1Keys = primaryKeys(grid(1).cache(TEST_CACHE_NAME), 100);
+        final List<Integer> g0Keys = primaryKeys(grid(0).cache(TEST_CACHE_NAME), 1000);
+        final List<Integer> g1Keys = primaryKeys(grid(1).cache(TEST_CACHE_NAME), 1000);
 
-        final List<Integer> g2BackupKeys = backupKeys(grid(2).cache(TEST_CACHE_NAME), 100, 0);
+        final List<Integer> g2BackupKeys = backupKeys(grid(2).cache(TEST_CACHE_NAME), 100, 1000);
 
         Integer k1 = null;
         Integer k2 = null;
