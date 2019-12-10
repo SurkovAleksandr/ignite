@@ -5,14 +5,12 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -25,6 +23,7 @@ import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.TestRecordingCommunicationSpi;
+import org.apache.ignite.internal.processors.cache.distributed.GridDistributedTxPrepareRequest;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTxPrepareRequest;
 import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxPrepareRequest;
 import org.apache.ignite.internal.util.typedef.G;
@@ -72,7 +71,8 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
     // В рамках теста с одного счета снимается 1, а на другой добавляется 1.
     private static final int COUNT_TRANSFERS = 10;
 
-    private volatile boolean isRunTest = true;
+    // Определяет надо ли продолжать тест. Используется для остановки потоков в ExecutorService
+    private volatile boolean isContinueTest = true;
 
     private Set<Integer> keysForDifferentNode;
 
@@ -185,7 +185,7 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
         //todo посмотреть primaryKeys()
 
         for (Integer key : keysForDifferentNode) {
-            if (!isRunTest)
+            if (!isContinueTest)
                 break;
 
             futureList.add(executorService.submit(() -> {
@@ -195,8 +195,6 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
                     String clientName = "MyClient" + key;
                     final IgniteEx client = startGrid(getConfiguration(clientName));
 
-
-                    setMessageBlocker(client, clientName);
                     setMessageBlocker(client, clientName);
 
                     addBatchAccounts(client, key);
@@ -206,18 +204,18 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
                 }
                 finally {
                     // Т.к. произошла ошибка, то останавливаем остальные потоки
-                    isRunTest = false;
+                    isContinueTest = false;
                     stopExecutorService(executorService);
                 }
             }));
 
             //todo делается один запрос
-            break;
+            //break;
         }
 
         for (Future future : futureList) {
             while (true) {
-                if (!isRunTest)
+                if (!isContinueTest)
                     break;
 
                 try {
@@ -232,7 +230,7 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
 
     private void setMessageBlocker(IgniteEx client, String clientName) {
         final Supplier<IgniteBiPredicate<ClusterNode, Message>> predicate = () -> (node, message) -> {
-            log.info("Block message:" + message.getClass().getSimpleName() + " client - : " + node.id());
+            log.info("Getting message:" + message.getClass().getSimpleName() + " client - : " + node.id());
 
             /*NearTxFinishFuture*/
             if (/*nodeForBlockMessage.contains(node.id()) &&*/
@@ -251,7 +249,7 @@ public class IgniteCacheConstraintTest extends GridCommonAbstractTest {
                 catch (InterruptedException e) {
                     e.printStackTrace();
                 }
-                return false;
+                //return true;
             }
 
             return false;

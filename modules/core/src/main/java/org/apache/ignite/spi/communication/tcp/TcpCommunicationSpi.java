@@ -2820,8 +2820,8 @@ public class TcpCommunicationSpi extends IgniteSpiAdapter implements Communicati
         assert node != null;
         assert msg != null;
 
-        if (log.isTraceEnabled())
-            log.trace("Sending message with ack to node [node=" + node + ", msg=" + msg + ']');
+        //if (log.isTraceEnabled())
+            log.warning("Sending message with ack to node [node=" + node + ", msg=" + msg + ']');
 
         if (isLocalNodeDisconnected()) {
             throw new IgniteSpiException("Failed to send a message to remote node because local node has " +
