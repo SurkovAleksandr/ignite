@@ -21,11 +21,14 @@ import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx
 import org.apache.ignite.internal.processors.cache.transactions.TransactionProxyImpl;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.testframework.GridTestUtils;
+import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.apache.ignite.transactions.Transaction;
 import org.apache.ignite.transactions.TransactionState;
 import org.junit.Test;
 
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_QUIET;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_WAL_LOG_TX_RECORDS;
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_ASYNC;
@@ -41,9 +44,6 @@ public class TxRecoveryWithConcurrentRollbackTest extends GridCommonAbstractTest
     /** Backups. */
     private int backups;
 
-    /** Persistence. */
-    private boolean persistence = true;
-
     /** Sync mode. */
     private CacheWriteSynchronizationMode syncMode = FULL_SYNC;
 
@@ -55,17 +55,15 @@ public class TxRecoveryWithConcurrentRollbackTest extends GridCommonAbstractTest
 
         cfg.setConsistentId(name);
 
-        if (persistence) {
-            cfg.setDataStorageConfiguration(
-                new DataStorageConfiguration().
-                    setWalSegmentSize(4 * 1024 * 1024).
-                    setWalHistorySize(1000).
-                    setCheckpointFrequency(Integer.MAX_VALUE).
-                    setDefaultDataRegionConfiguration(
-                        new DataRegionConfiguration()
-                            .setPersistenceEnabled(true)
-                            .setMaxSize(50 * 1024 * 1024)));
-        }
+        cfg.setDataStorageConfiguration(
+            new DataStorageConfiguration().
+                /*setWalSegmentSize(4 * 1024 * 1024).
+                setWalHistorySize(1000).
+                setCheckpointFrequency(Integer.MAX_VALUE).*/
+                setDefaultDataRegionConfiguration(
+                    new DataRegionConfiguration()
+                        .setPersistenceEnabled(true)
+                        .setMaxSize(50 * 1024 * 1024)));
 
         cfg.setActiveOnStart(false);
         cfg.setClientMode("client".equals(name));
@@ -103,9 +101,9 @@ public class TxRecoveryWithConcurrentRollbackTest extends GridCommonAbstractTest
      * Expected result: both DHT transactions produces same COMMITTED state on tx finish.
      * */
     @Test
+    @WithSystemProperty(key = IGNITE_WAL_LOG_TX_RECORDS, value = "true")
     public void testRecoveryNotBreakingTxAtomicityOnNearFail() throws Exception {
         backups = 1;
-        persistence = false;
 
         final IgniteEx node0 = startGrids(3);
         node0.cluster().active(true);
@@ -114,10 +112,10 @@ public class TxRecoveryWithConcurrentRollbackTest extends GridCommonAbstractTest
 
         final IgniteCache<Object, Object> cache = client.cache(TEST_CACHE_NAME);
 
-        final List<Integer> g0Keys = primaryKeys(grid(0).cache(TEST_CACHE_NAME), 1000);
-        final List<Integer> g1Keys = primaryKeys(grid(1).cache(TEST_CACHE_NAME), 1000);
+        final List<Integer> g0Keys = primaryKeys(grid(0).cache(TEST_CACHE_NAME), 100);
+        final List<Integer> g1Keys = primaryKeys(grid(1).cache(TEST_CACHE_NAME), 100);
 
-        final List<Integer> g2BackupKeys = backupKeys(grid(2).cache(TEST_CACHE_NAME), 100, 1000);
+        final List<Integer> g2BackupKeys = backupKeys(grid(2).cache(TEST_CACHE_NAME), 100, 0);
 
         Integer k1 = null;
         Integer k2 = null;
@@ -237,7 +235,6 @@ public class TxRecoveryWithConcurrentRollbackTest extends GridCommonAbstractTest
     private void doTestRecoveryNotBreakingTxAtomicityOnNearAndPrimaryFail(CacheWriteSynchronizationMode syncMode)
         throws Exception {
         backups = 2;
-        persistence = true;
         this.syncMode = syncMode;
 
         final IgniteEx node0 = startGrids(3);
