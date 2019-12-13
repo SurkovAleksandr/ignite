@@ -1,0 +1,466 @@
+package org.apache.ignite.internal.processors.cache.distributed.constraint;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.IntStream;
+import org.apache.ignite.Ignite;
+import org.apache.ignite.IgniteCache;
+import org.apache.ignite.cache.CacheWriteSynchronizationMode;
+import org.apache.ignite.configuration.CacheConfiguration;
+import org.apache.ignite.configuration.DataRegionConfiguration;
+import org.apache.ignite.configuration.DataStorageConfiguration;
+import org.apache.ignite.configuration.IgniteConfiguration;
+import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.IgniteInternalFuture;
+import org.apache.ignite.internal.TestRecordingCommunicationSpi;
+import org.apache.ignite.internal.processors.cache.distributed.GridCacheTtlUpdateRequest;
+import org.apache.ignite.internal.processors.cache.distributed.GridCacheTxRecoveryRequest;
+import org.apache.ignite.internal.processors.cache.distributed.GridCacheTxRecoveryResponse;
+import org.apache.ignite.internal.processors.cache.distributed.GridDistributedBaseMessage;
+import org.apache.ignite.internal.processors.cache.distributed.GridDistributedLockRequest;
+import org.apache.ignite.internal.processors.cache.distributed.GridDistributedLockResponse;
+import org.apache.ignite.internal.processors.cache.distributed.GridDistributedTxFinishRequest;
+import org.apache.ignite.internal.processors.cache.distributed.GridDistributedTxFinishResponse;
+import org.apache.ignite.internal.processors.cache.distributed.GridDistributedTxPrepareRequest;
+import org.apache.ignite.internal.processors.cache.distributed.GridDistributedTxPrepareResponse;
+import org.apache.ignite.internal.processors.cache.distributed.GridDistributedUnlockRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtLockRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtLockResponse;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTxFinishRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTxFinishResponse;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTxPrepareRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTxPrepareResponse;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTxQueryEnlistRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTxQueryEnlistResponse;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTxQueryFirstEnlistRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtUnlockRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridDhtAtomicAbstractUpdateRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridDhtAtomicDeferredUpdateResponse;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridDhtAtomicNearResponse;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridDhtAtomicSingleUpdateRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridDhtAtomicUpdateRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridDhtAtomicUpdateResponse;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridNearAtomicAbstractSingleUpdateRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridNearAtomicAbstractUpdateRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridNearAtomicCheckUpdateRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridNearAtomicFullUpdateRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridNearAtomicSingleUpdateFilterRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridNearAtomicSingleUpdateInvokeRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridNearAtomicSingleUpdateRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.atomic.GridNearAtomicUpdateResponse;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtForceKeysRequest;
+import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtForceKeysResponse;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearGetRequest;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearGetResponse;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearLockRequest;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearLockResponse;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearSingleGetRequest;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearSingleGetResponse;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxEnlistRequest;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxEnlistResponse;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxFinishRequest;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxFinishResponse;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxPrepareRequest;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxPrepareResponse;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxQueryEnlistRequest;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxQueryEnlistResponse;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxQueryResultsEnlistRequest;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearTxQueryResultsEnlistResponse;
+import org.apache.ignite.internal.processors.cache.distributed.near.GridNearUnlockRequest;
+import org.apache.ignite.internal.processors.cache.mvcc.msg.PartitionCountersNeighborcastRequest;
+import org.apache.ignite.internal.processors.cache.mvcc.msg.PartitionCountersNeighborcastResponse;
+import org.apache.ignite.internal.processors.cache.query.GridCacheQueryRequest;
+import org.apache.ignite.internal.processors.cache.query.GridCacheQueryResponse;
+import org.apache.ignite.internal.processors.cache.query.continuous.CacheContinuousQueryBatchAck;
+import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx;
+import org.apache.ignite.internal.processors.cache.transactions.TransactionProxyImpl;
+import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.plugin.extensions.communication.Message;
+import org.apache.ignite.testframework.GridTestUtils;
+import org.apache.ignite.testframework.junits.WithSystemProperty;
+import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
+import org.apache.ignite.transactions.Transaction;
+import org.apache.ignite.transactions.TransactionState;
+import org.junit.Test;
+
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_QUIET;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_WAL_LOG_TX_RECORDS;
+import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
+import static org.apache.ignite.cache.CacheMode.PARTITIONED;
+import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_ASYNC;
+import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
+import static org.apache.ignite.cache.CacheWriteSynchronizationMode.PRIMARY_SYNC;
+import static org.apache.ignite.testframework.GridTestUtils.runAsync;
+import static org.apache.ignite.transactions.TransactionConcurrency.PESSIMISTIC;
+import static org.apache.ignite.transactions.TransactionIsolation.READ_COMMITTED;
+
+/**
+ */
+public class ReproduserTest extends GridCommonAbstractTest {
+    /** Backups. */
+    private int backups;
+
+    /** Sync mode. */
+    private CacheWriteSynchronizationMode syncMode = FULL_SYNC;
+    private static final String CLIENT_NAME = "client";
+
+    protected static final String TEST_CACHE_NAME = "cacheTest";
+
+    /** {@inheritDoc} */
+    @Override protected IgniteConfiguration getConfiguration(String name) throws Exception {
+        final IgniteConfiguration cfg = super.getConfiguration(name);
+
+        cfg.setConsistentId(name);
+
+        cfg.setDataStorageConfiguration(
+            new DataStorageConfiguration().
+                /*setWalSegmentSize(4 * 1024 * 1024).
+                setWalHistorySize(1000).
+                setCheckpointFrequency(Integer.MAX_VALUE).*/
+                setDefaultDataRegionConfiguration(
+                    new DataRegionConfiguration()
+                        .setPersistenceEnabled(true)
+                        .setMaxSize(50 * 1024 * 1024)));
+
+        cfg.setActiveOnStart(false);
+        cfg.setClientMode(CLIENT_NAME.equals(name));
+        cfg.setCommunicationSpi(new TestRecordingCommunicationSpi());
+
+        cfg.setCacheConfiguration(new CacheConfiguration(TEST_CACHE_NAME).
+            setCacheMode(PARTITIONED).
+            setBackups(backups).
+            setAtomicityMode(TRANSACTIONAL).
+            setWriteSynchronizationMode(syncMode));
+
+        return cfg;
+    }
+
+    /** {@inheritDoc} */
+    @Override protected void beforeTest() throws Exception {
+        super.beforeTest();
+
+        //cleanPersistenceDir();
+    }
+
+    /** {@inheritDoc} */
+    @Override protected void afterTest() throws Exception {
+        super.afterTest();
+
+        stopAllGrids();
+
+        //cleanPersistenceDir();
+    }
+
+    /**
+     * The test enforces specific order in messages processing during concurrent tx rollback and tx recovery due to
+     * node left.
+     * <p>
+     * Expected result: both DHT transactions produces same COMMITTED state on tx finish.
+     * */
+    @Test
+    @WithSystemProperty(key = IGNITE_WAL_LOG_TX_RECORDS, value = "true")
+    public void testRecoveryNotBreakingTxAtomicityOnNearFail() throws Exception {
+        backups = 1;
+
+        final IgniteEx node0 = startGrids(3);
+        node0.cluster().active(true);
+
+        final Ignite client = startGrid(CLIENT_NAME);
+
+        final IgniteCache<Object, Object> cache = client.cache(TEST_CACHE_NAME);
+
+        final List<Integer> g0Keys = primaryKeys(grid(0).cache(TEST_CACHE_NAME), 100);
+        final List<Integer> g1Keys = primaryKeys(grid(1).cache(TEST_CACHE_NAME), 100);
+
+        final List<Integer> g2BackupKeys = backupKeys(grid(2).cache(TEST_CACHE_NAME), 100, 0);
+
+        Integer k1 = null;
+        Integer k2 = null;
+
+        for (Integer key : g2BackupKeys) {
+            if (g0Keys.contains(key))
+                k1 = key;
+            else if (g1Keys.contains(key))
+                k2 = key;
+
+            if (k1 != null && k2 != null)
+                break;
+        }
+
+        assertNotNull(k1);
+        assertNotNull(k2);
+
+        List<IgniteEx> allNodeList = new ArrayList<>();
+        allNodeList.add(grid(CLIENT_NAME));
+        IntStream.range(0, 3).forEach(i -> allNodeList.add(grid(i)));
+        startRecordMessage(allNodeList);
+
+        List<IgniteInternalTx> txs0 = null;
+        List<IgniteInternalTx> txs1 = null;
+
+        CountDownLatch stripeBlockLatch = new CountDownLatch(1);
+
+        int[] stripeHolder = new int[1];
+
+        try(final Transaction tx = client.transactions().txStart(PESSIMISTIC, READ_COMMITTED)) {
+            cache.put(k1, Boolean.TRUE);
+            cache.put(k2, Boolean.TRUE);
+
+            TransactionProxyImpl p  = (TransactionProxyImpl)tx;
+            p.tx().prepare(true);
+
+            txs0 = txs(grid(0));
+            txs1 = txs(grid(1));
+            List<IgniteInternalTx> txs2 = txs(grid(2));
+
+            assertTrue(txs0.size() == 1);
+            assertTrue(txs1.size() == 1);
+            assertTrue(txs2.size() == 2);
+
+            // Prevent recovery request for grid1 tx branch to go to grid0.
+            //TestRecordingCommunicationSpi.spi(grid(1)).blockMessages(GridCacheTxRecoveryRequest.class, grid(0).name());
+            TestRecordingCommunicationSpi.spi(grid(1)).blockMessages((node, message) -> {
+                if(node.consistentId().equals(grid(0).name()) &&
+                    message instanceof GridCacheTxRecoveryRequest) {
+                    log.info("Start interrupt message");
+                    /*try {
+                        TimeUnit.SECONDS.sleep(10);
+
+                    }
+                    catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }*/
+                    log.info("End interrupt message");
+                    return true;
+                }
+
+                return false;
+            });
+            // Prevent finish(false) request processing on node0.
+            TestRecordingCommunicationSpi.spi(client).blockMessages(GridNearTxFinishRequest.class, grid(0).name());
+
+            int stripe = U.safeAbs(p.tx().xidVersion().hashCode());
+
+            stripeHolder[0] = stripe;
+
+            // Blocks stripe processing for rollback request on node1.
+            grid(1).context().getStripedExecutorService().execute(stripe, () -> U.awaitQuiet(stripeBlockLatch));
+            // Dummy task to ensure msg is processed.
+            grid(1).context().getStripedExecutorService().execute(stripe, () -> {});
+
+            runAsync(() -> {
+                TestRecordingCommunicationSpi.spi(client).waitForBlocked();
+
+                client.close();
+
+                return null;
+            });
+
+            tx.rollback();
+
+            fail();
+        }
+        catch (Exception ignored) {
+            // Expected.
+        }
+
+        // Wait until tx0 is committed by recovery on node0.
+        assertNotNull(txs0);
+        txs0.get(0).finishFuture().get();
+
+        // Release rollback request processing, triggering an attempt to rollback the transaction during recovery.
+        stripeBlockLatch.countDown();
+
+        // Wait until finish message is processed.
+        /*GridTestUtils.waitForCondition(() ->
+            grid(1).context().getStripedExecutorService().queueSize(stripeHolder[0]) == 0, 5_000);*/
+        TimeUnit.SECONDS.sleep(5);
+
+        // Proceed with recovery on grid1 -> grid0. Tx0 is committed so tx1 also should be committed.
+        TestRecordingCommunicationSpi.spi(grid(1)).stopBlock();
+
+        assertNotNull(txs1);
+        txs1.get(0).finishFuture().get();
+
+        final TransactionState s1 = txs0.get(0).state();
+        final TransactionState s2 = txs1.get(0).state();
+
+        endRecordMessage(allNodeList);
+
+        assertEquals(s1, s2);
+    }
+
+    private void startRecordMessage(List<IgniteEx> allNodeList) {
+        allNodeList.forEach(ex -> {
+                TestRecordingCommunicationSpi.spi(ex)
+                    .record(
+                        GridDhtTxQueryEnlistResponse.class,
+                        GridNearTxQueryResultsEnlistRequest.class,
+                        GridDhtForceKeysRequest.class,
+                        GridNearGetResponse.class,
+                        CacheContinuousQueryBatchAck.class,
+                        GridDhtForceKeysResponse.class,
+                        GridCacheQueryRequest.class,
+                        GridNearGetRequest.class,
+                        GridNearTxEnlistRequest.class,
+                        PartitionCountersNeighborcastResponse.class,
+                        PartitionCountersNeighborcastRequest.class,
+                        GridDhtTxQueryEnlistRequest.class,
+                        GridDhtTxQueryFirstEnlistRequest.class,
+                        GridDistributedBaseMessage.class,
+                        GridCacheTxRecoveryResponse.class,
+                        GridDistributedTxFinishRequest.class,
+                        GridDhtTxFinishRequest.class,
+                        GridNearTxFinishRequest.class,
+                        GridDistributedTxPrepareResponse.class,
+                        GridDhtTxPrepareResponse.class,
+                        GridNearTxPrepareResponse.class,
+                        GridDistributedTxPrepareRequest.class,
+                        GridDhtTxPrepareRequest.class,
+                        GridNearTxPrepareRequest.class,
+                        GridDistributedUnlockRequest.class,
+                        GridNearUnlockRequest.class,
+                        GridDhtUnlockRequest.class,
+                        GridCacheTxRecoveryRequest.class,
+                        GridDistributedLockRequest.class,
+                        GridNearLockRequest.class,
+                        GridDhtLockRequest.class,
+                        GridDistributedLockResponse.class,
+                        GridNearLockResponse.class,
+                        GridDhtLockResponse.class,
+                        GridCacheTtlUpdateRequest.class,
+                        GridDhtAtomicUpdateResponse.class,
+                        GridDhtAtomicNearResponse.class,
+                        GridDhtAtomicAbstractUpdateRequest.class,
+                        GridDhtAtomicUpdateRequest.class,
+                        GridDhtAtomicSingleUpdateRequest.class,
+                        GridDhtAtomicDeferredUpdateResponse.class,
+                        GridNearAtomicUpdateResponse.class,
+                        GridNearSingleGetRequest.class,
+                        GridNearAtomicAbstractUpdateRequest.class,
+                        GridNearAtomicAbstractSingleUpdateRequest.class,
+                        GridNearAtomicSingleUpdateRequest.class,
+                        GridNearAtomicSingleUpdateInvokeRequest.class,
+                        GridNearAtomicSingleUpdateFilterRequest.class,
+                        GridNearAtomicFullUpdateRequest.class,
+                        GridNearTxQueryEnlistResponse.class,
+                        GridNearTxQueryResultsEnlistResponse.class,
+                        GridNearTxQueryEnlistRequest.class,
+                        GridNearAtomicCheckUpdateRequest.class,
+                        GridCacheQueryResponse.class,
+                        GridNearTxEnlistResponse.class,
+                        GridNearSingleGetResponse.class
+                    );
+            }
+        );
+    }
+
+    private void endRecordMessage(List<IgniteEx> allNodeList) {
+        for (IgniteEx ex : allNodeList) {
+            log.info("=================");
+            log.info("Node name: " + ex.name());
+            final TestRecordingCommunicationSpi spi = TestRecordingCommunicationSpi.spi(ex);
+            spi
+                .recordedMessages(true)
+                .forEach(o -> log.info(o.getClass().getSimpleName()));
+
+            log.info("Has blocked messages: " + spi.hasBlockedMessages() + '\n');
+        }
+    }
+
+    /** */
+    @Test
+    public void testRecoveryNotBreakingTxAtomicityOnNearAndPrimaryFail_FULL_SYNC() throws Exception {
+        doTestRecoveryNotBreakingTxAtomicityOnNearAndPrimaryFail(FULL_SYNC);
+    }
+
+    /** */
+    @Test
+    public void testRecoveryNotBreakingTxAtomicityOnNearAndPrimaryFail_PRIMARY_SYNC() throws Exception {
+        doTestRecoveryNotBreakingTxAtomicityOnNearAndPrimaryFail(PRIMARY_SYNC);
+    }
+
+    /** */
+    @Test
+    public void testRecoveryNotBreakingTxAtomicityOnNearAndPrimaryFail_FULL_ASYNC() throws Exception {
+        doTestRecoveryNotBreakingTxAtomicityOnNearAndPrimaryFail(FULL_ASYNC);
+    }
+
+    /**
+     * Stop near and primary node after primary tx is rolled back with enabled persistence.
+     * <p>
+     * Expected result: after restarting a primary node all partitions are consistent.
+     */
+    private void doTestRecoveryNotBreakingTxAtomicityOnNearAndPrimaryFail(CacheWriteSynchronizationMode syncMode)
+        throws Exception {
+        backups = 2;
+        this.syncMode = syncMode;
+
+        final IgniteEx node0 = startGrids(3);
+        node0.cluster().active(true);
+
+        final Ignite client = startGrid(CLIENT_NAME);
+
+        final IgniteCache<Object, Object> cache = client.cache(DEFAULT_CACHE_NAME);
+
+        final Integer pk = primaryKey(grid(1).cache(DEFAULT_CACHE_NAME));
+
+        IgniteInternalFuture<Void> fut = null;
+
+        List<IgniteInternalTx> tx0 = null;
+        List<IgniteInternalTx> tx2 = null;
+
+        try(final Transaction tx = client.transactions().txStart(PESSIMISTIC, READ_COMMITTED)) {
+            cache.put(pk, Boolean.TRUE);
+
+            TransactionProxyImpl p = (TransactionProxyImpl)tx;
+            p.tx().prepare(true);
+
+            tx0 = txs(grid(0));
+            tx2 = txs(grid(2));
+
+            TestRecordingCommunicationSpi.spi(grid(1)).blockMessages((node, msg) -> msg instanceof GridDhtTxFinishRequest);
+
+            fut = runAsync(() -> {
+                TestRecordingCommunicationSpi.spi(grid(1)).waitForBlocked(2);
+
+                client.close();
+                grid(1).close();
+
+                return null;
+            });
+
+            tx.rollback();
+        }
+        catch (Exception e) {
+            // No-op.
+        }
+
+        fut.get();
+
+        final IgniteInternalTx tx_0 = tx0.get(0);
+        tx_0.finishFuture().get();
+
+        final IgniteInternalTx tx_2 = tx2.get(0);
+        tx_2.finishFuture().get();
+
+        assertPartitionsSame(idleVerify(grid(0), DEFAULT_CACHE_NAME));
+
+        startGrid(1);
+
+        awaitPartitionMapExchange();
+
+        assertPartitionsSame(idleVerify(grid(0), DEFAULT_CACHE_NAME));
+    }
+
+    /**
+     * @param g Grid.
+     */
+    private List<IgniteInternalTx> txs(IgniteEx g) {
+        return new ArrayList<>(g.context().cache().context().tm().activeTransactions());
+    }
+}
+
+

@@ -14,6 +14,7 @@ import org.apache.ignite.internal.processors.cache.persistence.wal.reader.Ignite
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.lang.IgniteBiTuple;
 import org.apache.ignite.logger.NullLogger;
+import org.junit.Test;
 
 public class WalReader {
     static final String PAGE_SIZE = "pageSize";
@@ -46,20 +47,17 @@ public class WalReader {
             "C:\\Users\\17816867\\IdeaProjects\\ignite\\forks\\work\\db\\wal\\constraint_TxRecoveryWithConcurrentRollbackTest0",
             "C:\\Users\\17816867\\IdeaProjects\\ignite\\forks\\work\\db\\wal\\constraint_TxRecoveryWithConcurrentRollbackTest1",
             "C:\\Users\\17816867\\IdeaProjects\\ignite\\forks\\work\\db\\wal\\constraint_TxRecoveryWithConcurrentRollbackTest2"};
-        //List<String> dirs = F.asList(Paths.get(startDir).toFile().list());
+        //List<String> dirs = F.asList(Paths.get(startDir[0]).toFile().list());
         //Collections.shuffle(dirs);
-        //for (String dir : startDir) {
-            /*builder.filesOrDirs(Paths.get(startDir, dir).toAbsolutePath().toString());*/
-            builder.filesOrDirs(startDir);
-
-            //System.out.println(dir + "\n**************");
+        builder.filesOrDirs(startDir);
 
             try (WALIterator it = factory.iterator(builder)) {
-                while (it.hasNextX()) {
+                while (it.hasNextX()) {//MemoryRecoveryRecord
                     // TODO current file ((StandaloneWalRecordsIterator)it).walFileDescriptors.get(((StandaloneWalRecordsIterator)it).curIdx).getAbsolutePath()
                     IgniteBiTuple<WALPointer, WALRecord> t = it.nextX();
-
+                    final WALRecord walRecord = t.get2();
                     //printRecord(t.get1(), t.get2());
+                    //System.out.println("---" + walRecord.getClass().getSimpleName());
                     if (t.get2().type() == WALRecord.RecordType.TX_RECORD || t.get2().type() == WALRecord.RecordType.ROLLBACK_TX_RECORD)
                         System.out.println(t.toString());
                 }
