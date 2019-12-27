@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
+import org.MessageHolder;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.cache.CacheWriteSynchronizationMode;
@@ -85,8 +86,10 @@ import org.apache.ignite.transactions.Transaction;
 import org.apache.ignite.transactions.TransactionState;
 import org.junit.Test;
 
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_HOME;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_QUIET;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_WAL_LOG_TX_RECORDS;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_WORK_DIR;
 import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_ASYNC;
@@ -98,7 +101,7 @@ import static org.apache.ignite.transactions.TransactionIsolation.READ_COMMITTED
 
 /**
  */
-public class ReproduserTest extends GridCommonAbstractTest {
+public class ReproducerTest extends GridCommonAbstractTest {
     /** Backups. */
     private int backups;
 
@@ -161,6 +164,8 @@ public class ReproduserTest extends GridCommonAbstractTest {
      * */
     @Test
     @WithSystemProperty(key = IGNITE_WAL_LOG_TX_RECORDS, value = "true")
+    @WithSystemProperty(key = IGNITE_HOME, value = "C:\\Users\\17816867\\IdeaProjects\\temp")
+    @WithSystemProperty(key = IGNITE_WORK_DIR, value = "C:\\Users\\17816867\\IdeaProjects\\temp")
     public void testRecoveryNotBreakingTxAtomicityOnNearFail() throws Exception {
         backups = 1;
 
@@ -175,6 +180,12 @@ public class ReproduserTest extends GridCommonAbstractTest {
         final List<Integer> g1Keys = primaryKeys(grid(1).cache(TEST_CACHE_NAME), 100);
 
         final List<Integer> g2BackupKeys = backupKeys(grid(2).cache(TEST_CACHE_NAME), 100, 0);
+
+        //Записываем информацию о UUID узлах в лог сообщений
+        MessageHolder.messageList.add(CLIENT_NAME + ":" + grid(CLIENT_NAME).localNode().id());
+        MessageHolder.messageList.add("n0:" + grid(0).localNode().id());
+        MessageHolder.messageList.add("n1:" + grid(1).localNode().id());
+        MessageHolder.messageList.add("n2:" + grid(2).localNode().id());
 
         Integer k1 = null;
         Integer k2 = null;
@@ -204,6 +215,7 @@ public class ReproduserTest extends GridCommonAbstractTest {
 
         int[] stripeHolder = new int[1];
 
+        log.info("Start test");
         try(final Transaction tx = client.transactions().txStart(PESSIMISTIC, READ_COMMITTED)) {
             cache.put(k1, Boolean.TRUE);
             cache.put(k2, Boolean.TRUE);
@@ -224,15 +236,6 @@ public class ReproduserTest extends GridCommonAbstractTest {
             TestRecordingCommunicationSpi.spi(grid(1)).blockMessages((node, message) -> {
                 if(node.consistentId().equals(grid(0).name()) &&
                     message instanceof GridCacheTxRecoveryRequest) {
-                    log.info("Start interrupt message");
-                    /*try {
-                        TimeUnit.SECONDS.sleep(10);
-
-                    }
-                    catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }*/
-                    log.info("End interrupt message");
                     return true;
                 }
 
@@ -258,18 +261,23 @@ public class ReproduserTest extends GridCommonAbstractTest {
                 return null;
             });
 
+            MessageHolder.messageList.add("Before rollback");
             tx.rollback();
+            MessageHolder.messageList.add("After rollback");
 
-            fail();
+            /*fail();*/
         }
         catch (Exception ignored) {
             // Expected.
         }
 
+        log.info("End test");
+
         // Wait until tx0 is committed by recovery on node0.
         assertNotNull(txs0);
         txs0.get(0).finishFuture().get();
 
+        MessageHolder.messageList.add("Before countDown");
         // Release rollback request processing, triggering an attempt to rollback the transaction during recovery.
         stripeBlockLatch.countDown();
 
@@ -278,6 +286,9 @@ public class ReproduserTest extends GridCommonAbstractTest {
             grid(1).context().getStripedExecutorService().queueSize(stripeHolder[0]) == 0, 5_000);*/
         TimeUnit.SECONDS.sleep(5);
 
+        endRecordMessage(allNodeList);
+
+        MessageHolder.messageList.add("Stop blocking message");
         // Proceed with recovery on grid1 -> grid0. Tx0 is committed so tx1 also should be committed.
         TestRecordingCommunicationSpi.spi(grid(1)).stopBlock();
 
@@ -287,7 +298,9 @@ public class ReproduserTest extends GridCommonAbstractTest {
         final TransactionState s1 = txs0.get(0).state();
         final TransactionState s2 = txs1.get(0).state();
 
-        endRecordMessage(allNodeList);
+        for (String s : MessageHolder.messageList) {
+            log.info(" -> " + s);
+        }
 
         assertEquals(s1, s2);
     }
@@ -295,64 +308,7 @@ public class ReproduserTest extends GridCommonAbstractTest {
     private void startRecordMessage(List<IgniteEx> allNodeList) {
         allNodeList.forEach(ex -> {
                 TestRecordingCommunicationSpi.spi(ex)
-                    .record(
-                        GridDhtTxQueryEnlistResponse.class,
-                        GridNearTxQueryResultsEnlistRequest.class,
-                        GridDhtForceKeysRequest.class,
-                        GridNearGetResponse.class,
-                        CacheContinuousQueryBatchAck.class,
-                        GridDhtForceKeysResponse.class,
-                        GridCacheQueryRequest.class,
-                        GridNearGetRequest.class,
-                        GridNearTxEnlistRequest.class,
-                        PartitionCountersNeighborcastResponse.class,
-                        PartitionCountersNeighborcastRequest.class,
-                        GridDhtTxQueryEnlistRequest.class,
-                        GridDhtTxQueryFirstEnlistRequest.class,
-                        GridDistributedBaseMessage.class,
-                        GridCacheTxRecoveryResponse.class,
-                        GridDistributedTxFinishRequest.class,
-                        GridDhtTxFinishRequest.class,
-                        GridNearTxFinishRequest.class,
-                        GridDistributedTxPrepareResponse.class,
-                        GridDhtTxPrepareResponse.class,
-                        GridNearTxPrepareResponse.class,
-                        GridDistributedTxPrepareRequest.class,
-                        GridDhtTxPrepareRequest.class,
-                        GridNearTxPrepareRequest.class,
-                        GridDistributedUnlockRequest.class,
-                        GridNearUnlockRequest.class,
-                        GridDhtUnlockRequest.class,
-                        GridCacheTxRecoveryRequest.class,
-                        GridDistributedLockRequest.class,
-                        GridNearLockRequest.class,
-                        GridDhtLockRequest.class,
-                        GridDistributedLockResponse.class,
-                        GridNearLockResponse.class,
-                        GridDhtLockResponse.class,
-                        GridCacheTtlUpdateRequest.class,
-                        GridDhtAtomicUpdateResponse.class,
-                        GridDhtAtomicNearResponse.class,
-                        GridDhtAtomicAbstractUpdateRequest.class,
-                        GridDhtAtomicUpdateRequest.class,
-                        GridDhtAtomicSingleUpdateRequest.class,
-                        GridDhtAtomicDeferredUpdateResponse.class,
-                        GridNearAtomicUpdateResponse.class,
-                        GridNearSingleGetRequest.class,
-                        GridNearAtomicAbstractUpdateRequest.class,
-                        GridNearAtomicAbstractSingleUpdateRequest.class,
-                        GridNearAtomicSingleUpdateRequest.class,
-                        GridNearAtomicSingleUpdateInvokeRequest.class,
-                        GridNearAtomicSingleUpdateFilterRequest.class,
-                        GridNearAtomicFullUpdateRequest.class,
-                        GridNearTxQueryEnlistResponse.class,
-                        GridNearTxQueryResultsEnlistResponse.class,
-                        GridNearTxQueryEnlistRequest.class,
-                        GridNearAtomicCheckUpdateRequest.class,
-                        GridCacheQueryResponse.class,
-                        GridNearTxEnlistResponse.class,
-                        GridNearSingleGetResponse.class
-                    );
+                    .record();
             }
         );
     }
