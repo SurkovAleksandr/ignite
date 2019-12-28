@@ -61,15 +61,17 @@ public class Reproducer_ReadFromBackup extends GridCommonAbstractTest {
      */
     private static final AtomicReference<Throwable> err = new AtomicReference<>();
 
+    private static final String CLIENT_PREFIX = "client";
+
     @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
         final IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
-        cfg.setFailureHandler(new AbstractFailureHandler() {
+        /*cfg.setFailureHandler(new AbstractFailureHandler() {
             @Override protected boolean handle(Ignite ignite, FailureContext failureCtx) {
                 err.compareAndSet(null, failureCtx.error());
                 stop.set(true);
                 return false;
             }
-        });
+        });*/
 
         cfg.setConsistentId(igniteInstanceName);
 
@@ -80,14 +82,14 @@ public class Reproducer_ReadFromBackup extends GridCommonAbstractTest {
             .setWriteSynchronizationMode(FULL_SYNC)
             .setReadFromBackup(false);
 
-        CacheConfiguration<Long, Long> atomicCcfg = new CacheConfiguration<Long, Long>(ATOMIC_CACHE)
+        /*CacheConfiguration<Long, Long> atomicCcfg = new CacheConfiguration<Long, Long>(ATOMIC_CACHE)
             .setAtomicityMode(ATOMIC)
             .setCacheMode(PARTITIONED)
             .setBackups(1)
             .setWriteSynchronizationMode(FULL_SYNC)
-            .setReadFromBackup(true);
+            .setReadFromBackup(true);*/
 
-        cfg.setCacheConfiguration(txCcfg, atomicCcfg);
+        cfg.setCacheConfiguration(txCcfg/*, atomicCcfg*/);
         return cfg;
     }
 
@@ -127,13 +129,8 @@ public class Reproducer_ReadFromBackup extends GridCommonAbstractTest {
 
                 boolean isSuccess = true;
 
-                try {
+                /*try {*/
                     cache0.put(keyValue, keyValue);
-
-                    if(integer.equals(7_000)) {
-                        grid0.close();
-                        log.warning("==========================");
-                    }
 
                     Long valueCache1 = cache1.get(keyValue);
                     Long valueCache2 = cache2.get(keyValue);
@@ -141,17 +138,76 @@ public class Reproducer_ReadFromBackup extends GridCommonAbstractTest {
                     if (!isSuccess) {
                         log.error("Error getting value " + keyValue + ". valueCache1=" + valueCache1 + ", valueCache2=" + valueCache2);
                     }
-
                     return isSuccess;
-                } catch (IllegalStateException ex) {
+                /*} catch (IllegalStateException ex) {
                     isSuccess = ex.getCause() instanceof CacheStoppedException;
-                }
+                }*/
 
-                return isSuccess;
+                //return isSuccess;
             }));
         });
 
+        grid0.close();
+        //Ignition.stop(grid0.name(), false);
 
+        for (Future<Boolean> future : futureList) {
+            Boolean isSuccess = true;
+            try {
+                isSuccess = future.get(10, TimeUnit.SECONDS);
+            }
+            catch (ExecutionException ex) {
+                log.error("Get was failed " + ex.getMessage());
+            }
+            assertTrue(isSuccess);
+        }
+    }
+
+    @Test
+    public void testPutAndGetThroughClient() throws Exception {
+        final IgniteEx grid0 = startGrids(countGrids);
+        grid0.cluster().active(true);
+
+        List<IgniteEx> clientList = new ArrayList<>();
+        clientList.add(startGrid(CLIENT_PREFIX + "0"));
+        clientList.add(startGrid(CLIENT_PREFIX + "1"));
+        clientList.add(startGrid(CLIENT_PREFIX + "2"));
+
+        final IgniteCache<Long, Long> cache0 = grid0.cache(TX_CACHE);
+
+        final List<Integer> g0Keys = primaryKeys(cache0, 10_000);
+
+        List<Future<Boolean>> futureList = new ArrayList<>(g0Keys.size());
+        final ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+
+        for (int i = 0; i < g0Keys.size(); i++) {
+            for (IgniteEx client : clientList) {
+                final Long keyValue = Long.valueOf(g0Keys.get(i));
+                i++;
+                futureList.add(executorService.submit(() -> {
+                    boolean isSuccess = true;
+
+                    try {
+                        IgniteCache<Long, Long> cache = client.getOrCreateCache(TX_CACHE);
+                        cache.put(keyValue, keyValue);
+
+                        Long valueCache1 = cache.get(keyValue);
+                        Long valueCache2 = cache.get(keyValue);
+                        isSuccess = keyValue.equals(valueCache1) && valueCache1.equals(valueCache2);
+                        if (!isSuccess) {
+                            log.error("Error getting value " + keyValue + ". valueCache1=" + valueCache1 + ", valueCache2=" + valueCache2);
+                        }
+                        return isSuccess;
+                    }
+                    catch (IllegalStateException ex) {
+                        isSuccess = ex.getCause() instanceof CacheStoppedException;
+                    }
+
+                    return isSuccess;
+                }));
+            }
+        }
+        U.sleep(100);
+        grid0.close();
         //Ignition.stop(grid0.name(), false);
 
         for (Future<Boolean> future : futureList) {
