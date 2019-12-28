@@ -109,7 +109,6 @@
     <!--
         Uncomment to enable transactions debugging.
     -->
-    <!--
          <category name="org.apache.ignite.cache.msg.tx.prepare">
              <level value="DEBUG"/>
          </category>
@@ -121,7 +120,6 @@
          <category name="org.apache.ignite.cache.msg.tx.recovery">
              <level value="DEBUG"/>
          </category>
-    -->
 
     <!-- Disable all open source debugging. -->
     <category name="org">

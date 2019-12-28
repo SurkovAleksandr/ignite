@@ -98,7 +98,7 @@ public class TestRecordingCommunicationSpi extends TcpCommunicationSpi {
                 boolean record = (recordClasses != null && recordClasses.contains(msg0.getClass())) ||
                     (recordP != null && recordP.apply(node, msg0));
 
-                if (record)
+//теперь все сообщения записываются                if (record)
                     recordedMsgs.add(msg0);
 
                 boolean block = false;

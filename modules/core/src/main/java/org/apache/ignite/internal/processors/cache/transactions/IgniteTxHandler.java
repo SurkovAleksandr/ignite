@@ -22,6 +22,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 import javax.cache.processor.EntryProcessor;
+import org.MessageHolder;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteLogger;
@@ -1066,11 +1067,13 @@ public class IgniteTxHandler {
             tx.nearFinishMiniId(req.miniId());
             tx.storeEnabled(req.storeEnabled());
 
+            MessageHolder.messageList.add(Thread.currentThread().getName() + " [-----trace----, isCommit=" + req.commit() + "]");
             if (req.commit()) {
+                MessageHolder.messageList.add(Thread.currentThread().getName() + " [method=Will not finish transaction, isCommit=" + req.commit() + "]");
                 if (!tx.markFinalizing(USER_FINISH)) {
                     if (log.isDebugEnabled())
-                        log.debug("Will not finish transaction (it is handled by another thread): " + tx);
-
+                        log.debug("Will not finish transaction (it is handled by another thread) [commit=" + req.commit() + ", tx=" + tx + ']');
+                    MessageHolder.messageList.add(Thread.currentThread().getName() + " [method=Will not finish transaction, isCommit=" + req.commit() + "]");
                     return null;
                 }
 

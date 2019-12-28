@@ -2,19 +2,23 @@ package org.apache.ignite.internal.processors.cache.distributed.constraint;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.cache.CacheException;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.Ignition;
 import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.failure.AbstractFailureHandler;
 import org.apache.ignite.failure.FailureContext;
 import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.NodeStoppingException;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.Test;
 
@@ -65,7 +69,7 @@ public class Reproducer_ReadFromBackup extends GridCommonAbstractTest {
             .setCacheMode(PARTITIONED)
             .setBackups(1)
             .setWriteSynchronizationMode(FULL_SYNC)
-            .setReadFromBackup(true);
+            .setReadFromBackup(false);
 
         CacheConfiguration<Long, Long> atomicCcfg = new CacheConfiguration<Long, Long>(ATOMIC_CACHE)
             .setAtomicityMode(ATOMIC)
@@ -80,10 +84,10 @@ public class Reproducer_ReadFromBackup extends GridCommonAbstractTest {
 
     /**
      * Исходные данные:
-     * - для кэша setWriteSynchronizationMode(FULL_SYNC)
-     * - для кэша setReadFromBackup(false)
+     * - для кэша установить setWriteSynchronizationMode(FULL_SYNC)
+     * - для кэша установить setReadFromBackup(false)
      * Эмуляция ситуации, когда один из primary узлов выходит из кластера. При этом put в кэш проходит, а get ничего не получает.
-     * Ожидается, что пуе должен отработать успешно. Исправление сделано в 2.8
+     * Ожидается, что get должен отработать успешно. Исправление сделано в 2.8
      *
      * Из переписки в чате:
      *  Вопрос: А что происходит в кластере из трех нод, когда запрашиваемый мастер-партишен находится на первой ноде,
@@ -104,10 +108,12 @@ public class Reproducer_ReadFromBackup extends GridCommonAbstractTest {
         final IgniteCache<Long, Long> cache0 = grid0.cache(TX_CACHE);
         final IgniteCache<Long, Long> cache1 = grid(1).cache(TX_CACHE);
         final IgniteCache<Long, Long> cache2 = grid(2).cache(TX_CACHE);
+
         final List<Integer> g0Keys = primaryKeys(cache0, 10_000);
 
         List<Future<Boolean>> futureList = new ArrayList<>(g0Keys.size());
         final ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+
         g0Keys.forEach(integer -> {
             futureList.add(executorService.submit(() -> {
                 Long keyValue = Long.valueOf(integer);
@@ -122,8 +128,15 @@ public class Reproducer_ReadFromBackup extends GridCommonAbstractTest {
             }));
         });
 
+        Ignition.stop(grid0.name(), false);
+
         for (Future<Boolean> future : futureList) {
-            final Boolean isSuccess = future.get(10, TimeUnit.SECONDS);
+            Boolean isSuccess = true;
+            try {
+                isSuccess = future.get(10, TimeUnit.SECONDS);
+            } catch (ExecutionException ex) {
+                System.out.println("asdsa");
+            }
             assertTrue(isSuccess);
         }
     }

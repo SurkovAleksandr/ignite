@@ -78,7 +78,7 @@ public class CacheConfigurationP2PTest extends GridCommonAbstractTest {
      */
     @Test
     public void testCacheConfigurationP2P() throws Exception {
-        fail("Enable when IGNITE-537 is fixed.");
+        //fail("Enable when IGNITE-537 is fixed.");
 
         try (Ignite ignite = Ignition.start(createConfiguration())) {
             final CountDownLatch srvsReadyLatch = new CountDownLatch(2);
