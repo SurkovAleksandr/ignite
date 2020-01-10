@@ -30,6 +30,7 @@ import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.PRIMARY_SYNC;
 
 /**
+ * todo тест находится в ветке get_put_2.7.6
  * Воспроизведение следующей ситуации:
  * стартуют три ноды идет вставка в кеш. Потом чтение. При этом запись проходит успешно, но чтение периодически нет.
  * */
