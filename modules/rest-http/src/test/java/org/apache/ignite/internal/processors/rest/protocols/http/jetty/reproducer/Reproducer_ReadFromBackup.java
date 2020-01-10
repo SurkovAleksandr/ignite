@@ -26,6 +26,7 @@ import org.apache.ignite.configuration.IgniteConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.processors.cache.CacheStoppedException;
 import org.apache.ignite.internal.util.typedef.PA;
+import org.apache.ignite.lang.IgniteFuture;
 import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 
@@ -80,7 +81,7 @@ public class Reproducer_ReadFromBackup extends GridCommonAbstractTest {
 
         cfg.setConsistentId(igniteInstanceName);
 
-        cfg.setConnectorConfiguration(new ConnectorConfiguration());
+        //cfg.setConnectorConfiguration(new ConnectorConfiguration());
 
         //todo
         /*cfg.setFailureHandler(new AbstractFailureHandler() {
@@ -100,7 +101,7 @@ public class Reproducer_ReadFromBackup extends GridCommonAbstractTest {
             .setCacheMode(PARTITIONED)
             .setBackups(2)
             .setWriteSynchronizationMode(FULL_SYNC)
-            .setReadFromBackup(false);
+            .setReadFromBackup(true);
 
         cfg.setCacheConfiguration(txCcfg);
         return cfg;
@@ -191,10 +192,16 @@ public class Reproducer_ReadFromBackup extends GridCommonAbstractTest {
 
                     try {
                         IgniteCache<Long, Long> cache = client.getOrCreateCache(TX_CACHE);
-                        cache.put(keyValue, keyValue);
+                        cache.putAsync(keyValue, keyValue);
 
-                        Long valueCache1 = cache.get(keyValue);
-                        Long valueCache2 = cache.get(keyValue);
+                        /*Long valueCache1 = cache.get(keyValue);
+                        Long valueCache2 = cache.get(keyValue);*/
+
+                        final IgniteFuture<Long> future1 = cache.getAsync(keyValue);
+                        final IgniteFuture<Long> future2 = cache.getAsync(keyValue);
+                        Long valueCache1 = future1.get();
+                        Long valueCache2 = future2.get();
+
                         isSuccess = keyValue.equals(valueCache1) && valueCache1.equals(valueCache2);
                         if (!isSuccess) {
                             log.error("Error getting value " + keyValue + ". valueCache1=" + valueCache1 + ", valueCache2=" + valueCache2);
