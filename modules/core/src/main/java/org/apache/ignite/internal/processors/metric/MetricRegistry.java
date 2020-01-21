@@ -21,11 +21,13 @@ import java.util.Iterator;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
 import java.util.function.DoubleSupplier;
+import java.util.function.Function;
 import java.util.function.IntSupplier;
 import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import org.apache.ignite.IgniteLogger;
+import org.apache.ignite.internal.processors.metric.impl.AtomicLongMetric;
 import org.apache.ignite.internal.processors.metric.impl.BooleanGauge;
 import org.apache.ignite.internal.processors.metric.impl.BooleanMetricImpl;
 import org.apache.ignite.internal.processors.metric.impl.DoubleGauge;
@@ -37,16 +39,15 @@ import org.apache.ignite.internal.processors.metric.impl.IntMetricImpl;
 import org.apache.ignite.internal.processors.metric.impl.LongAdderMetric;
 import org.apache.ignite.internal.processors.metric.impl.LongAdderWithDelegateMetric;
 import org.apache.ignite.internal.processors.metric.impl.LongGauge;
-import org.apache.ignite.internal.processors.metric.impl.AtomicLongMetric;
 import org.apache.ignite.internal.processors.metric.impl.ObjectGauge;
 import org.apache.ignite.internal.processors.metric.impl.ObjectMetricImpl;
 import org.apache.ignite.spi.metric.BooleanMetric;
 import org.apache.ignite.spi.metric.IntMetric;
-import org.apache.ignite.spi.metric.LongMetric;
 import org.apache.ignite.spi.metric.Metric;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static org.apache.ignite.internal.processors.metric.impl.HitRateMetric.DFLT_SIZE;
 import static org.apache.ignite.internal.processors.metric.impl.MetricUtils.metricName;
 import static org.apache.ignite.internal.util.lang.GridFunc.nonThrowableSupplier;
 
@@ -63,13 +64,24 @@ public class MetricRegistry implements Iterable<Metric> {
     /** Registered metrics. */
     private final ConcurrentHashMap<String, Metric> metrics = new ConcurrentHashMap<>();
 
+    /** HitRate config provider. */
+    private final Function<String, Long> hitRateCfgProvider;
+
+    /** Histogram config provider. */
+    private final Function<String, long[]> histogramCfgProvider;
+
     /**
      * @param grpName Group name.
+     * @param hitRateCfgProvider HitRate config provider.
+     * @param histogramCfgProvider Histogram config provider.
      * @param log Logger.
      */
-    public MetricRegistry(String grpName, IgniteLogger log) {
+    public MetricRegistry(String grpName, Function<String, Long> hitRateCfgProvider,
+        Function<String, long[]> histogramCfgProvider, IgniteLogger log) {
         this.grpName = grpName;
         this.log = log;
+        this.hitRateCfgProvider = hitRateCfgProvider;
+        this.histogramCfgProvider = histogramCfgProvider;
     }
 
     /**
@@ -156,14 +168,15 @@ public class MetricRegistry implements Iterable<Metric> {
     }
 
     /**
-     * Registers {@link LongMetric} which value will be queried from the specified supplier.
+     * Registers {@link LongGauge} which value will be queried from the specified supplier.
      *
      * @param name Name.
      * @param supplier Supplier.
      * @param desc Description.
+     * @return Metric of type {@link LongGauge}.
      */
-    public void register(String name, LongSupplier supplier, @Nullable String desc) {
-        addMetric(name, new LongGauge(metricName(grpName, name), desc, nonThrowableSupplier(supplier, log)));
+    public LongGauge register(String name, LongSupplier supplier, @Nullable String desc) {
+        return addMetric(name, new LongGauge(metricName(grpName, name), desc, nonThrowableSupplier(supplier, log)));
     }
 
     /**
@@ -252,7 +265,16 @@ public class MetricRegistry implements Iterable<Metric> {
      * @see HitRateMetric
      */
     public HitRateMetric hitRateMetric(String name, @Nullable String desc, long rateTimeInterval, int size) {
-        return addMetric(name, new HitRateMetric(metricName(grpName, name), desc, rateTimeInterval, size));
+        String fullName = metricName(grpName, name);
+
+        HitRateMetric metric = addMetric(name, new HitRateMetric(fullName, desc, rateTimeInterval, size));
+
+        Long cfgRateTimeInterval = hitRateCfgProvider.apply(fullName);
+
+        if (cfgRateTimeInterval != null)
+            metric.reset(cfgRateTimeInterval, DFLT_SIZE);
+
+        return metric;
     }
 
     /**
@@ -276,7 +298,16 @@ public class MetricRegistry implements Iterable<Metric> {
      * @return {@link HistogramMetric}
      */
     public HistogramMetric histogram(String name, long[] bounds, @Nullable String desc) {
-        return addMetric(name, new HistogramMetric(metricName(grpName, name), desc, bounds));
+        String fullName = metricName(grpName, name);
+
+        HistogramMetric metric = addMetric(name, new HistogramMetric(fullName, desc, bounds));
+
+        long[] cfgBounds = histogramCfgProvider.apply(fullName);
+
+        if (cfgBounds != null)
+            metric.reset(cfgBounds);
+
+        return metric;
     }
 
     /**

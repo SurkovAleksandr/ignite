@@ -17,7 +17,9 @@
 
 package org.apache.ignite.util;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.PrintStream;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Path;
@@ -49,21 +51,27 @@ import org.apache.ignite.internal.processors.cache.transactions.IgniteInternalTx
 import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.internal.util.typedef.internal.U;
+import org.apache.ignite.spi.encryption.keystore.KeystoreEncryptionSpi;
+import org.apache.ignite.testframework.GridTestUtils;
 import org.apache.ignite.testframework.junits.SystemPropertiesRule;
 import org.apache.ignite.testframework.junits.WithSystemProperty;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.ClassRule;
 import org.junit.rules.TestRule;
 
+import static java.lang.String.join;
+import static java.lang.System.lineSeparator;
 import static java.nio.file.Files.delete;
 import static java.nio.file.Files.newDirectoryStream;
 import static java.util.Arrays.asList;
 import static java.util.Objects.nonNull;
-import static org.apache.ignite.IgniteSystemProperties.IGNITE_BASELINE_AUTO_ADJUST_ENABLED;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_ENABLE_EXPERIMENTAL_COMMAND;
 import static org.apache.ignite.configuration.DataStorageConfiguration.DFLT_CHECKPOINT_FREQ;
+import static org.apache.ignite.internal.encryption.AbstractEncryptionTest.KEYSTORE_PASSWORD;
+import static org.apache.ignite.internal.encryption.AbstractEncryptionTest.KEYSTORE_PATH;
 import static org.apache.ignite.internal.processors.cache.verify.VerifyBackupPartitionsDumpTask.IDLE_DUMP_FILE_PREFIX;
 import static org.apache.ignite.testframework.GridTestUtils.cleanIdleVerifyLogFiles;
+import static org.apache.ignite.util.GridCommandHandlerTestUtils.addSslParams;
 
 /**
  * Common abstract class for testing {@link CommandHandler}.
@@ -71,7 +79,6 @@ import static org.apache.ignite.testframework.GridTestUtils.cleanIdleVerifyLogFi
  * {@link GridCommandHandlerClusterPerMethodAbstractTest}
  * {@link GridCommandHandlerClusterByClassAbstractTest}
  */
-@WithSystemProperty(key = IGNITE_BASELINE_AUTO_ADJUST_ENABLED, value = "false")
 @WithSystemProperty(key = IGNITE_ENABLE_EXPERIMENTAL_COMMAND, value = "true")
 public abstract class GridCommandHandlerAbstractTest extends GridCommonAbstractTest {
     /** */
@@ -85,6 +92,9 @@ public abstract class GridCommandHandlerAbstractTest extends GridCommonAbstractT
 
     /** System out. */
     protected static PrintStream sysOut;
+
+    /** System in. */
+    private static InputStream sysIn;
 
     /**
      * Test out - can be injected via {@link #injectTestSystemOut()} instead of System.out and analyzed in test.
@@ -101,12 +111,19 @@ public abstract class GridCommandHandlerAbstractTest extends GridCommonAbstractT
     /** Checkpoint frequency. */
     protected long checkpointFreq = DFLT_CHECKPOINT_FREQ;
 
+    /** Enable automatic confirmation to avoid user interaction. */
+    protected boolean autoConfirmation = true;
+
+    /** {@code True} if encription is enabled. */
+    protected boolean encriptionEnabled;
+
     /** {@inheritDoc} */
     @Override protected void beforeTestsStarted() throws Exception {
         super.beforeTestsStarted();
 
         testOut = new ByteArrayOutputStream(16 * 1024);
         sysOut = System.out;
+        sysIn = System.in;
     }
 
     /** {@inheritDoc} */
@@ -124,10 +141,13 @@ public abstract class GridCommandHandlerAbstractTest extends GridCommonAbstractT
         log.info("----------------------------------------");
 
         System.setOut(sysOut);
+        System.setIn(sysIn);
 
         log.info(testOut.toString());
 
         testOut.reset();
+
+        encriptionEnabled = false;
     }
 
     /** {@inheritDoc} */
@@ -148,6 +168,11 @@ public abstract class GridCommandHandlerAbstractTest extends GridCommonAbstractT
     }
 
     /** */
+    protected boolean sslEnabled() {
+        return false;
+    }
+
+    /** */
     protected boolean idleVerifyRes(Path p) {
         return p.toFile().getName().startsWith(IDLE_DUMP_FILE_PREFIX);
     }
@@ -161,7 +186,10 @@ public abstract class GridCommandHandlerAbstractTest extends GridCommonAbstractT
 
         cfg.setCommunicationSpi(new TestRecordingCommunicationSpi());
 
-        cfg.setConnectorConfiguration(new ConnectorConfiguration());
+        cfg.setConnectorConfiguration(new ConnectorConfiguration().setSslEnabled(sslEnabled()));
+
+        if (sslEnabled())
+            cfg.setSslContextFactory(GridTestUtils.sslFactory());
 
         DataStorageConfiguration memCfg = new DataStorageConfiguration()
             .setCheckpointFrequency(checkpointFreq)
@@ -179,6 +207,15 @@ public abstract class GridCommandHandlerAbstractTest extends GridCommonAbstractT
         cfg.setConsistentId(igniteInstanceName);
 
         cfg.setClientMode(igniteInstanceName.startsWith(CLIENT_NODE_NAME_PREFIX));
+
+        if (encriptionEnabled) {
+            KeystoreEncryptionSpi encSpi = new KeystoreEncryptionSpi();
+
+            encSpi.setKeyStorePath(KEYSTORE_PATH);
+            encSpi.setKeyStorePassword(KEYSTORE_PASSWORD.toCharArray());
+
+            cfg.setEncryptionSpi(encSpi);
+        }
 
         return cfg;
     }
@@ -248,13 +285,31 @@ public abstract class GridCommandHandlerAbstractTest extends GridCommonAbstractT
      * @param args Incoming arguments;
      */
     protected void addExtraArguments(List<String> args) {
-        // Add force to avoid interactive confirmation.
-        args.add(CMD_AUTO_CONFIRMATION);
+        if (autoConfirmation)
+            args.add(CMD_AUTO_CONFIRMATION);
+
+        if (sslEnabled()) {
+            // We shouldn't add extra args for --cache help.
+            if (args.size() < 2 || !args.get(0).equals("--cache") || !args.get(1).equals("help"))
+                addSslParams(args);
+        }
     }
 
     /** */
     protected void injectTestSystemOut() {
         System.setOut(new PrintStream(testOut));
+    }
+
+    /**
+     * Emulates user input.
+     *
+     * @param inputStrings User input strings.
+     * */
+    protected void injectTestSystemIn(String... inputStrings) {
+        assert nonNull(inputStrings);
+
+        String inputStr = join(lineSeparator(), inputStrings);
+        System.setIn(new ByteArrayInputStream(inputStr.getBytes()));
     }
 
     /**
@@ -330,7 +385,8 @@ public abstract class GridCommandHandlerAbstractTest extends GridCommonAbstractT
 
         ignite.createCache(new CacheConfiguration<>(DEFAULT_CACHE_NAME)
             .setAffinity(new RendezvousAffinityFunction(false, 32))
-            .setBackups(1));
+            .setBackups(1)
+            .setEncryptionEnabled(encriptionEnabled));
 
         IgniteCache<Object, Object> cache = ignite.cache(DEFAULT_CACHE_NAME);
         for (int i = 0; i < countEntries; i++)

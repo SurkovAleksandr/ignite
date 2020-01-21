@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.TimeoutException;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.configuration.DeploymentMode;
 import org.apache.ignite.events.DeploymentEvent;
@@ -279,18 +280,16 @@ public class GridDeploymentPerVersionStore extends GridDeploymentStoreAdapter {
 
     /** {@inheritDoc} */
     @Override public GridDeployment searchDeploymentCache(GridDeploymentMetadata meta) {
-        List<SharedDeployment> deps = null;
-
         synchronized (mux) {
-            deps = cache.get(meta.userVersion());
-        }
+            List<SharedDeployment> deps = cache.get(meta.userVersion());
 
-        if (deps != null) {
-            assert !deps.isEmpty();
+            if (deps != null) {
+                assert !deps.isEmpty();
 
-            for (SharedDeployment d : deps) {
-                if (d.hasParticipant(meta.senderNodeId(), meta.classLoaderId()))
-                    return d;
+                for (SharedDeployment d : deps) {
+                    if (d.hasParticipant(meta.senderNodeId(), meta.classLoaderId()))
+                        return d;
+                }
             }
         }
 
@@ -701,7 +700,7 @@ public class GridDeploymentPerVersionStore extends GridDeploymentStoreAdapter {
                 return false;
 
             // Temporary class loader.
-            ClassLoader temp = new GridDeploymentClassLoader(
+            GridDeploymentClassLoader temp = new GridDeploymentClassLoader(
                 IgniteUuid.fromUuid(ctx.localNodeId()),
                 meta.userVersion(),
                 meta.deploymentMode(),
@@ -724,7 +723,14 @@ public class GridDeploymentPerVersionStore extends GridDeploymentStoreAdapter {
             InputStream rsrcIn = null;
 
             try {
-                rsrcIn = temp.getResourceAsStream(path);
+                boolean timeout = false;
+
+                try {
+                    rsrcIn = temp.getResourceAsStreamEx(path);
+                }
+                catch (TimeoutException e) {
+                    timeout = true;
+                }
 
                 boolean found = rsrcIn != null;
 
@@ -744,7 +750,7 @@ public class GridDeploymentPerVersionStore extends GridDeploymentStoreAdapter {
 
                         return false;
                     }
-                    else
+                    else if (!timeout)
                         // Cache result if classloader is still alive.
                         ldrRsrcCache.put(clsName, found);
                 }

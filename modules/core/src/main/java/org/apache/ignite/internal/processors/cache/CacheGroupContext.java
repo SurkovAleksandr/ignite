@@ -773,6 +773,13 @@ public class CacheGroupContext {
      * @return Group name if it is specified, otherwise cache name.
      */
     public String cacheOrGroupName() {
+        return cacheOrGroupName(ccfg);
+    }
+
+    /**
+     * @return Group name if it is specified, otherwise cache name.
+     */
+    public static String cacheOrGroupName(CacheConfiguration<?, ?> ccfg) {
         return ccfg.getGroupName() != null ? ccfg.getGroupName() : ccfg.getName();
     }
 
@@ -1082,8 +1089,11 @@ public class CacheGroupContext {
                 ccfg.getCacheMode() == LOCAL
             );
 
-        if (ccfg.getCacheMode() != LOCAL)
+        if (ccfg.getCacheMode() != LOCAL) {
             top = new GridDhtPartitionTopologyImpl(ctx, this);
+
+            metrics.onTopologyInitialized();
+        }
 
         try {
             offheapMgr = persistenceEnabled
@@ -1293,5 +1303,16 @@ public class CacheGroupContext {
      */
     public CacheGroupMetricsImpl metrics() {
         return metrics;
+    }
+
+    /**
+     * Removes statistics metrics registries.
+     */
+    public void removeIOStatistic() {
+        if (statHolderData != IoStatisticsHolderNoOp.INSTANCE)
+            ctx.kernalContext().metric().remove(statHolderData.metricRegistryName());
+
+        if (statHolderIdx != IoStatisticsHolderNoOp.INSTANCE)
+            ctx.kernalContext().metric().remove(statHolderIdx.metricRegistryName());
     }
 }

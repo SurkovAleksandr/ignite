@@ -50,8 +50,9 @@ import org.apache.ignite.internal.processors.rest.handlers.GridRestCommandHandle
 import org.apache.ignite.internal.processors.rest.handlers.auth.AuthenticationCommandHandler;
 import org.apache.ignite.internal.processors.rest.handlers.cache.GridCacheCommandHandler;
 import org.apache.ignite.internal.processors.rest.handlers.cluster.GridBaselineCommandHandler;
-import org.apache.ignite.internal.processors.rest.handlers.cluster.GridChangeReadOnlyModeCommandHandler;
+import org.apache.ignite.internal.processors.rest.handlers.cluster.GridChangeClusterStateCommandHandler;
 import org.apache.ignite.internal.processors.rest.handlers.cluster.GridChangeStateCommandHandler;
+import org.apache.ignite.internal.processors.rest.handlers.cluster.GridClusterNameCommandHandler;
 import org.apache.ignite.internal.processors.rest.handlers.memory.MemoryMetricsCommandHandler;
 import org.apache.ignite.internal.processors.rest.handlers.datastructures.DataStructuresCommandHandler;
 import org.apache.ignite.internal.processors.rest.handlers.log.GridLogCommandHandler;
@@ -101,7 +102,7 @@ import static org.apache.ignite.plugin.security.SecuritySubjectType.REMOTE_CLIEN
 /**
  * Rest processor implementation.
  */
-public class GridRestProcessor extends GridProcessorAdapter {
+public class GridRestProcessor extends GridProcessorAdapter implements IgniteRestProcessor {
     /** HTTP protocol class name. */
     private static final String HTTP_PROTO_CLS =
         "org.apache.ignite.internal.processors.rest.protocols.http.jetty.GridJettyRestProtocol";
@@ -543,7 +544,8 @@ public class GridRestProcessor extends GridProcessorAdapter {
             addHandler(new QueryCommandHandler(ctx));
             addHandler(new GridLogCommandHandler(ctx));
             addHandler(new GridChangeStateCommandHandler(ctx));
-            addHandler(new GridChangeReadOnlyModeCommandHandler(ctx));
+            addHandler(new GridChangeClusterStateCommandHandler(ctx));
+            addHandler(new GridClusterNameCommandHandler(ctx));
             addHandler(new AuthenticationCommandHandler(ctx));
             addHandler(new UserActionCommandHandler(ctx));
             addHandler(new GridBaselineCommandHandler(ctx));
@@ -914,6 +916,7 @@ public class GridRestProcessor extends GridProcessorAdapter {
             case BASELINE_SET:
             case BASELINE_ADD:
             case BASELINE_REMOVE:
+            case CLUSTER_SET_STATE:
                 perm = SecurityPermission.ADMIN_OPS;
 
                 break;
@@ -933,7 +936,9 @@ public class GridRestProcessor extends GridProcessorAdapter {
             case NAME:
             case LOG:
             case CLUSTER_CURRENT_STATE:
+            case CLUSTER_NAME:
             case BASELINE_CURRENT_STATE:
+            case CLUSTER_STATE:
             case AUTHENTICATE:
             case ADD_USER:
             case REMOVE_USER:

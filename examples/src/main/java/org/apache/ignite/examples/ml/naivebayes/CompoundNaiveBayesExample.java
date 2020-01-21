@@ -17,7 +17,7 @@
 
 package org.apache.ignite.examples.ml.naivebayes;
 
-import java.io.FileNotFoundException;
+import java.io.IOException;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.Ignition;
@@ -29,6 +29,7 @@ import org.apache.ignite.ml.naivebayes.compound.CompoundNaiveBayesTrainer;
 import org.apache.ignite.ml.naivebayes.discrete.DiscreteNaiveBayesTrainer;
 import org.apache.ignite.ml.naivebayes.gaussian.GaussianNaiveBayesTrainer;
 import org.apache.ignite.ml.selection.scoring.evaluator.Evaluator;
+import org.apache.ignite.ml.selection.scoring.metric.MetricName;
 import org.apache.ignite.ml.util.MLSandboxDatasets;
 import org.apache.ignite.ml.util.SandboxMLCache;
 
@@ -51,7 +52,8 @@ import static java.util.Arrays.asList;
  * You can change the test data used in this example and re-run it to explore this algorithm further.</p>
  */
 public class CompoundNaiveBayesExample {
-    public static void main(String[] args) throws FileNotFoundException {
+    /** Run example. */
+    public static void main(String[] args) throws IOException {
         System.out.println();
         System.out.println(">>> Compound Naive Bayes classification model over partitioned dataset usage example started.");
         // Start ignite grid.
@@ -84,8 +86,9 @@ public class CompoundNaiveBayesExample {
             double accuracy = Evaluator.evaluate(
                 dataCache,
                 mdl,
-                vectorizer
-            ).accuracy();
+                vectorizer,
+                MetricName.ACCURACY
+            );
 
             System.out.println("\n>>> Accuracy " + accuracy);
 
