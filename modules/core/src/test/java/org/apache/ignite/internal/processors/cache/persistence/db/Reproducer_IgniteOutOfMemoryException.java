@@ -7,17 +7,18 @@ import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.configuration.DataRegionConfiguration;
 import org.apache.ignite.configuration.DataStorageConfiguration;
 import org.apache.ignite.configuration.IgniteConfiguration;
+import org.apache.ignite.failure.FailureHandler;
+import org.apache.ignite.failure.StopNodeFailureHandler;
 import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryEx;
+import org.apache.ignite.internal.processors.cache.persistence.pagemem.PageMemoryImpl;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.Test;
 
 public class Reproducer_IgniteOutOfMemoryException extends GridCommonAbstractTest {
-
-    private static final String CACHE_NAME_FREE_MEMORY = "MemCache_FreeMemory";
     private static final String CACHE_NAME_1 = "MemCache_1";
     private static final String CACHE_NAME_2 = "MemCache_2";
     private static final String CACHE_GROUP = "GroupMemCache";
-    private static final String DATA_REGION_FREE_MEMORY = "dataRegionFreeMemory";
     private static final long DEFAULT_DATA_REGION_SIZE = 10 * 1024 * 1024;
 
 
@@ -28,9 +29,8 @@ public class Reproducer_IgniteOutOfMemoryException extends GridCommonAbstractTes
     @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
         final IgniteConfiguration cfg = super.getConfiguration(igniteInstanceName);
 
-        cfg.setCacheConfiguration(
-            /*new CacheConfiguration(CACHE_NAME_FREE_MEMORY)
-                .setDataRegionName(DATA_REGION_FREE_MEMORY),*/
+       /**  config for {@link #testDeleteCacheWithForLocalCacheMode()}
+       cfg.setCacheConfiguration(
             new CacheConfiguration(CACHE_NAME_1)
                 .setGroupName(CACHE_GROUP)
                 .setCacheMode(CacheMode.LOCAL),
@@ -39,18 +39,25 @@ public class Reproducer_IgniteOutOfMemoryException extends GridCommonAbstractTes
                 .setCacheMode(CacheMode.LOCAL)
         );
 
-        cfg.setDataStorageConfiguration(
+       cfg.setDataStorageConfiguration(
             new DataStorageConfiguration()
                 .setDefaultDataRegionConfiguration(
                     new DataRegionConfiguration()
                         .setPersistenceEnabled(true)
                         .setMaxSize(DEFAULT_DATA_REGION_SIZE)
                 )
-                /*.setDataRegionConfigurations(
-                    new DataRegionConfiguration()
-                        .setName(DATA_REGION_FREE_MEMORY)
-                        .setMaxSize(getFreePhysicalMemorySize() - DEFAULT_DATA_REGION_SIZE - 1 * 1024 * 1024)
-                )*/
+       );*/
+
+
+        cfg.setDataStorageConfiguration(new DataStorageConfiguration()
+            .setDefaultDataRegionConfiguration(new DataRegionConfiguration()
+                .setPersistenceEnabled(true)
+                .setMaxSize(256L * 1024 * 1024)
+            ));
+
+        cfg.setCacheConfiguration(
+            new CacheConfiguration(DEFAULT_CACHE_NAME).setGroupName("grp"),
+            new CacheConfiguration("another_cache").setGroupName("grp")
         );
 
         return cfg;
@@ -92,29 +99,25 @@ public class Reproducer_IgniteOutOfMemoryException extends GridCommonAbstractTes
         cache1.destroy();
     }
 
+    @Override protected FailureHandler getFailureHandler(String igniteInstanceName) {
+        return new StopNodeFailureHandler();
+    }
+
     @Test
-    public void testDeleteCacheWithSmallDataRegion() throws Exception {
+    public void testDestroyCache() throws Exception {
+        IgniteEx ignite = startGrid(0);
 
-        final IgniteEx igniteEx = startGrid(1);
-        igniteEx.cluster().active(true);
+        ignite.cluster().active(true);
 
-        try (final IgniteDataStreamer<Object, Object> streamerFreeMem = igniteEx.dataStreamer(CACHE_NAME_FREE_MEMORY);
-            final IgniteDataStreamer<Object, Object> streamer1 = igniteEx.dataStreamer(CACHE_NAME_1);
-            final IgniteDataStreamer<Object, Object> streamer2 = igniteEx.dataStreamer(CACHE_NAME_2)) {
+        try (IgniteDataStreamer<Object, Object> streamer = ignite.dataStreamer(DEFAULT_CACHE_NAME)) {
+            PageMemoryEx pageMemory = (PageMemoryEx)ignite.cachex(DEFAULT_CACHE_NAME).context().dataRegion().pageMemory();
 
-            for (int i = 0; i < 100; i++) {
-                streamerFreeMem.addData(i, new byte[2001]);
-            }
+            long totalPages = pageMemory.totalPages();
 
-            for (int i = 0; i < 100_000; i++) {
-                streamer1.addData(i, "OOM " + i);
-                streamer2.addData(i, "OOM2 " + i);
-            }
+            for (int i = 0; i <= totalPages; i++)
+                streamer.addData(i, new byte[pageMemory.pageSize() / 2]);
         }
 
-        igniteEx.context().cache().context().database().waitForCheckpoint("OOM end");
-
-        final IgniteCache<Object, Object> cache1 = igniteEx.getOrCreateCache(CACHE_NAME_1);
-        cache1.destroy();
+        ignite.destroyCache(DEFAULT_CACHE_NAME);
     }
 }
