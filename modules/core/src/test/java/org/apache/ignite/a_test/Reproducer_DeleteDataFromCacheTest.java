@@ -83,7 +83,7 @@ public class Reproducer_DeleteDataFromCacheTest extends GridCommonAbstractTest {
     @Test
     public void testMessageFromBroadcust() throws Exception {
 
-        int countEntry = 1_000_000;
+        int countEntry = 1000;
 
         final IgniteEx grid0 = (IgniteEx)startGrids(2);
         grid0.cluster().active(true);

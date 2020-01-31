@@ -1,6 +1,7 @@
 package org.apache.ignite.a_test;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -37,8 +38,8 @@ public class DeleteDataCallable implements IgniteCallable<String> {
         final ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
         List<Future<Long>> futureList = new ArrayList<>();
         for (int partitionId : primaryPartitions) {
-            //futureList.add(executorService.submit(new DeleteDataOnIterator(i, cache)));
-            futureList.add(executorService.submit(new DeleteDataAfterIteration3(partitionId, cache, log)));
+            futureList.add(executorService.submit(new DeleteDataOnIterator(partitionId, cache, log)));
+            //futureList.add(executorService.submit(new DeleteDataAfterIteration3(partitionId, cache, log)));
         }
 
         futureList.forEach(future -> {
@@ -56,7 +57,7 @@ public class DeleteDataCallable implements IgniteCallable<String> {
     private static class DeleteDataAfterIteration3 implements Callable<Long> {
         private int partitionId;
         private IgniteInternalCache<Object, Object> cache;
-        private static final int countInBatch = 100;
+        private static final int countInBatch = 10000;
         private IgniteLogger log;
 
         public DeleteDataAfterIteration3(int partitionId, IgniteInternalCache<Object, Object> cache, IgniteLogger log) {
@@ -92,9 +93,9 @@ public class DeleteDataCallable implements IgniteCallable<String> {
                     keyCacheObjectList.add(row.key());
                 }
 
-                /*if(keyCacheObjectList.size() == 100) {
+                if(keyCacheObjectList.size() == 10_000) {
                     break;
-                }*/
+                }
             }
 
             return keyCacheObjectList;
@@ -103,15 +104,15 @@ public class DeleteDataCallable implements IgniteCallable<String> {
 
     // todo итератор не поддерживается(UnsupportedOperationException)
     private static class DeleteDataOnIterator implements Callable<Long> {
-        @LoggerResource
         IgniteLogger log;
 
         private int partitionId;
         private IgniteInternalCache<Object, Object> cache;
 
-        public DeleteDataOnIterator(int partitionId, IgniteInternalCache<Object, Object> cache) {
+        public DeleteDataOnIterator(int partitionId, IgniteInternalCache<Object, Object> cache, IgniteLogger log) {
             this.partitionId = partitionId;
             this.cache = cache;
+            this.log = log;
         }
 
         @Override public Long call() throws Exception {
@@ -122,13 +123,18 @@ public class DeleteDataCallable implements IgniteCallable<String> {
             final GridIterator<CacheDataRow> partitionIterator = context.offheap().partitionIterator(partitionId);
 
             long countDeleted = 0;
-            while (partitionIterator.hasNext()) {
-                final BinaryObject value = (BinaryObject)partitionIterator.next();
-
-                if ((int)value.field("age") > 10) {
-                    partitionIterator.remove();
-                    countDeleted++;
+            try {
+                while (partitionIterator.hasNext()) {
+                    final CacheDataRow row = partitionIterator.next();
+                    final BinaryObject value = (BinaryObject)row.value();
+                    if ((int)value.field("age") > 10) {
+                        partitionIterator.remove();
+                        countDeleted++;
+                    }
                 }
+
+            } catch (Exception ex) {
+                log.error("Error while remove element from cache", ex);
             }
             return countDeleted;
         }
