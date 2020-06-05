@@ -44,6 +44,7 @@ import javax.cache.expiry.ModifiedExpiryPolicy;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.Ignition;
+import org.apache.ignite.binary.BinaryBasicNameMapper;
 import org.apache.ignite.binary.BinaryObject;
 import org.apache.ignite.cache.CacheAtomicityMode;
 import org.apache.ignite.cache.CacheKeyConfiguration;
@@ -54,6 +55,7 @@ import org.apache.ignite.cache.CacheWriteSynchronizationMode;
 import org.apache.ignite.cache.PartitionLossPolicy;
 import org.apache.ignite.cache.QueryEntity;
 import org.apache.ignite.cache.QueryIndex;
+import org.apache.ignite.configuration.BinaryConfiguration;
 import org.apache.ignite.configuration.ClientConfiguration;
 import org.apache.ignite.internal.client.thin.ClientServerError;
 import org.apache.ignite.internal.processors.odbc.ClientListenerProcessor;
@@ -87,6 +89,37 @@ public class FunctionalTest {
     /** Per test timeout */
     @Rule
     public Timeout globalTimeout = new Timeout((int) GridTestUtils.DFLT_TEST_TIMEOUT);
+
+
+    @Test
+    public void simpleTest() {
+        try (Ignite ignored = Ignition.start(Config.getServerConfiguration());
+             IgniteClient client = Ignition.startClient(getClientConfiguration())
+        ) {
+            ClientCache<Person, Integer> cache = client.getOrCreateCache("testPutGet");
+
+            Integer val = 1;
+
+            Person key = new Person(val, "Joe");
+
+            IgniteCache<Person, Integer> cache1 = ignored.getOrCreateCache("testPutGet");
+
+            cache1.put(key, val);
+
+            final BinaryObject build = client.binary().builder("org.apache.ignite.client.Person").setField("id", val).setField("name", "Joe").build();
+            Integer cachedVal = (Integer) cache.withKeepBinary().get(build);
+
+            assertNull(cachedVal);
+
+            final BinaryObject build1 = ignored.binary().builder("org.apache.ignite.client.Person").setField("id", val).setField("name", "Joe").build();
+            cachedVal = (Integer) cache.withKeepBinary().get(build1);
+
+            assertEquals(val, cachedVal);
+        }
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
 
     /**
      * Tested API:
@@ -1055,9 +1088,20 @@ public class FunctionalTest {
     }
 
     /** */
-    private static ClientConfiguration getClientConfiguration() {
+    /*private static ClientConfiguration getClientConfiguration() {
         return new ClientConfiguration()
             .setAddresses(Config.SERVER)
+            .setSendBufferSize(0)
+            .setReceiveBufferSize(0);
+    }*/
+
+    private static ClientConfiguration getClientConfiguration() {
+        BinaryConfiguration bcfg = new BinaryConfiguration().setCompactFooter(true)
+            .setNameMapper(new BinaryBasicNameMapper());
+
+        return new ClientConfiguration()
+            .setAddresses(Config.SERVER)
+            .setBinaryConfiguration(bcfg)
             .setSendBufferSize(0)
             .setReceiveBufferSize(0);
     }
