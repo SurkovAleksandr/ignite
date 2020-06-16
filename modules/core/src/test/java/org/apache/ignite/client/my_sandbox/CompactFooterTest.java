@@ -23,7 +23,7 @@ import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.Test;
 
 /**
- * TODO пока не удалось получить ошибку
+ * Тест падает на 2.7.6. На 2.8 не падает.
  * Пример ошибки:
  * org.apache.ignite.internal.client.thin.ClientServerError: Ignite failed to process request [102]:
  *      Cannot find schema for object with compact footer [typeName=com.ignite_se.clients_examples.thin_client.scan_query.ScanQueryByTextPredicate, typeId=-614392894, missingSchemaId=1955455756, existingSchemaIds=[]] (server status code [1])
@@ -39,71 +39,33 @@ import org.junit.Test;
  * */
 public class CompactFooterTest extends GridCommonAbstractTest {
 
-    @Override protected IgniteConfiguration getConfiguration(String igniteInstanceName) throws Exception {
-        return new IgniteConfiguration()
-            .setIgniteInstanceName(igniteInstanceName)
-            .setDiscoverySpi(new TcpDiscoverySpi().setIpFinder(new TcpDiscoveryVmIpFinder().setAddresses(Arrays.asList("localhost:47500"))))
-            .setBinaryConfiguration(new BinaryConfiguration().setCompactFooter(true));
-    }
-
-    @Override protected boolean isMultiJvm() {
-        return true;
-    }
-
     @Test
-    public void cannotFindSchemaWithCompactFooter() throws Exception {
+    public void testCannotFindSchemaWithCompactFooterTest() throws Exception {
         final String cacheName = "cache_compact_footer";
+        final String key = "key";
+        final String value = "key_value";
 
         final IgniteEx server = startGrid("serverTest");
-        server.cluster().state(ClusterState.ACTIVE);
-        server.getOrCreateCache(cacheName).put("my_name", "value_1");
-//        final IgniteEx client = startClientGrid("clientTest");
+        server.cluster().active(true);
+        server.getOrCreateCache(cacheName).put(key, value);
 
         final ClientConfiguration thinCfg = new ClientConfiguration()
             .setAddresses("127.0.0.1:10800")
             .setBinaryConfiguration(new BinaryConfiguration().setCompactFooter(true));
 
         try (final IgniteClient clientThin = Ignition.startClient(thinCfg)) {
+
             final ClientCache<String, String> cacheThin = clientThin.getOrCreateCache(cacheName);
 
-            final String valueThin = cacheThin.get("my_name");
+            final String valueThin = cacheThin.get(key);
 
             assertNotNull(valueThin);
 
-            final List<Cache.Entry<String, String>> entries = cacheThin.query(new ScanQuery<String, String>((k, v) -> "value_1".equals(v))).getAll();
+            final List<Cache.Entry<String, String>> entries = cacheThin.query(new ScanQuery<String, String>((k, v) -> value.equals(v))).getAll();
 
             assertNotNull(entries);
             assertFalse(entries.isEmpty());
-            assertEquals("value_1", entries.iterator().next().getValue());
+            assertEquals(value, entries.iterator().next().getValue());
         }
     }
-
-    public static void main(String[] args) {
-        final String key = "Key3";
-        final String value = "Key3_value";
-
-        final IgniteConfiguration serverCfg = new IgniteConfiguration()
-            .setDiscoverySpi(new TcpDiscoverySpi().setIpFinder(new TcpDiscoveryVmIpFinder().setAddresses(Arrays.asList("localhost:47500"))));
-
-        final ClientConfiguration clientCfg = new ClientConfiguration()
-            .setAddresses("127.0.0.1:10800")
-            .setBinaryConfiguration(new BinaryConfiguration().setCompactFooter(true));
-
-        try (Ignite server = Ignition.start(serverCfg);
-             IgniteClient client = Ignition.startClient(clientCfg)) {
-
-            server.cluster().active(true);
-
-            final ClientCache<String, String> test1 = client.getOrCreateCache(new ClientCacheConfiguration().setName("test_compact_footer"));
-
-            test1.put(key, value);
-
-            final List<Cache.Entry<String, String>> all = test1.query(new ScanQuery<String, String>((s, s2) -> s.startsWith(key))).getAll();
-            all.forEach(stringStringEntry -> System.out.println(stringStringEntry.getKey() + ": " + stringStringEntry.getValue()));
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-}
+ }
