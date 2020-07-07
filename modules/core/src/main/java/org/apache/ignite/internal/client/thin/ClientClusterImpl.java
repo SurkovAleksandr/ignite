@@ -28,20 +28,16 @@ import org.apache.ignite.internal.binary.BinaryWriterExImpl;
  * Implementation of {@link ClientCluster}.
  */
 class ClientClusterImpl extends ClientClusterGroupImpl implements ClientCluster {
-    /** Channel. */
-    private final ReliableChannel ch;
-
-    /** Binary marshaller. */
-    private final ClientBinaryMarshaller marsh;
+    /** Default cluster group. */
+    private final ClientClusterGroupImpl dfltClusterGrp;
 
     /**
      * Constructor.
      */
     ClientClusterImpl(ReliableChannel ch, ClientBinaryMarshaller marsh) {
-        super(null);
+        super(ch, marsh);
 
-        this.ch = ch;
-        this.marsh = marsh;
+        dfltClusterGrp = (ClientClusterGroupImpl)forServers();
     }
 
     /** {@inheritDoc} */
@@ -66,7 +62,7 @@ class ClientClusterImpl extends ClientClusterGroupImpl implements ClientCluster 
 
                     checkClusterApiSupported(protocolCtx);
 
-                    if (newState.ordinal() > 1 && !protocolCtx.isFeatureSupported(ProtocolBitmaskFeature.CLUSTER_API)) {
+                    if (newState.ordinal() > 1 && !protocolCtx.isFeatureSupported(ProtocolBitmaskFeature.CLUSTER_STATES)) {
                         throw new ClientFeatureNotSupportedByServerException("State " + newState.name() + " is not " +
                             "supported by the server");
                     }
@@ -141,7 +137,14 @@ class ClientClusterImpl extends ClientClusterGroupImpl implements ClientCluster 
     private void checkClusterApiSupported(ProtocolContext protocolCtx)
         throws ClientFeatureNotSupportedByServerException {
         if (!protocolCtx.isFeatureSupported(ProtocolVersionFeature.CLUSTER_API) &&
-            !protocolCtx.isFeatureSupported(ProtocolBitmaskFeature.CLUSTER_API))
-            throw new ClientFeatureNotSupportedByServerException(ProtocolBitmaskFeature.CLUSTER_API);
+            !protocolCtx.isFeatureSupported(ProtocolBitmaskFeature.CLUSTER_STATES))
+            throw new ClientFeatureNotSupportedByServerException(ProtocolBitmaskFeature.CLUSTER_STATES);
+    }
+
+    /**
+     * Default cluster group ("for servers").
+     */
+    ClientClusterGroupImpl defaultClusterGroup() {
+        return dfltClusterGrp;
     }
 }
