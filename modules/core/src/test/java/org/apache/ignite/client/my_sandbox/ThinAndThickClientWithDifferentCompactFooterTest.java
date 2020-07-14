@@ -2,19 +2,25 @@ package org.apache.ignite.client.my_sandbox;
 
 import java.util.Objects;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.IgniteDataStreamer;
 import org.apache.ignite.Ignition;
 import org.apache.ignite.client.ClientCache;
 import org.apache.ignite.client.FunctionalTest;
 import org.apache.ignite.client.IgniteClient;
+import org.apache.ignite.configuration.BinaryConfiguration;
 import org.apache.ignite.configuration.ClientConfiguration;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.testframework.junits.common.GridCommonAbstractTest;
 import org.junit.Test;
 
 /**
- * Тесты связанные с различными настройками CompactFooter
+ * Тесты связанные с различными дефолтными настройками CompactFooter на стороне сервера(true) и тонкого клиента(false).
+ * Чтобы тест не падал надо выставить для тонкого клиента: .setBinaryConfiguration(new BinaryConfiguration().setCompactFooter(true)).
+ *
+ * Если не выставить CompactFooter(true) для тонкого клиента, то не получится получить значение положенное через put или dataStreamer.
  * <p>
  * Дополнительно можно посмотреть {@link FunctionalTest}
+ * https://issues.apache.org/jira/browse/IGNITE-10960
  */
 public class ThinAndThickClientWithDifferentCompactFooterTest extends GridCommonAbstractTest {
     /**
@@ -31,15 +37,17 @@ public class ThinAndThickClientWithDifferentCompactFooterTest extends GridCommon
 
         IgniteCache<KeyObj, String> cacheThick = clientThick.getOrCreateCache(cacheName);
 
-        /*try (final IgniteDataStreamer<KeyObj, String> streamer = clientThick.dataStreamer(cacheName)) {
+        //dataStreamer и put
+        try (final IgniteDataStreamer<KeyObj, String> streamer = clientThick.dataStreamer(cacheName)) {
             streamer.addData(keyObj, "Value_1");
-        }*/
-        cacheThick.put(keyObj, "value_1");
+        }
+//        cacheThick.put(keyObj, "value_1");
 
         String valueThick = cacheThick.get(keyObj);
 
         assertNotNull(valueThick);
 
+        // Чтобы тест не падал, для тонкого клиента надо добавить .setBinaryConfiguration(new BinaryConfiguration().setCompactFooter(true))
         try (final IgniteClient clientThin = Ignition.startClient(new ClientConfiguration().setAddresses("127.0.0.1:10800"))) {
             final ClientCache<KeyObj, String> cacheThin = clientThin.getOrCreateCache(cacheName);
 
