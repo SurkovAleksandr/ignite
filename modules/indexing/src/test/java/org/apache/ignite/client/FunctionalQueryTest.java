@@ -18,16 +18,18 @@
 package org.apache.ignite.client;
 
 import java.lang.invoke.SerializedLambda;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import javax.cache.Cache;
 import org.apache.ignite.Ignite;
+import org.apache.ignite.IgniteCache;
 import org.apache.ignite.Ignition;
 import org.apache.ignite.binary.BinaryTypeConfiguration;
+import org.apache.ignite.cache.QueryEntity;
 import org.apache.ignite.cache.query.Query;
 import org.apache.ignite.cache.query.QueryCursor;
 import org.apache.ignite.cache.query.ScanQuery;
@@ -275,5 +277,68 @@ public class FunctionalQueryTest {
         return new ClientConfiguration().setAddresses(Config.SERVER)
             .setSendBufferSize(0)
             .setReceiveBufferSize(0);
+    }
+
+    @Test
+    public void testMixedQueryAndCacheApiOperations2() throws Exception {
+        try (Ignite ignored = Ignition.start(Config.getServerConfiguration());
+             IgniteClient client = Ignition.startClient(
+                     new ClientConfiguration()
+                             .setBinaryConfiguration(
+                                     new BinaryConfiguration().setCompactFooter(true)
+                             )
+                             .setAddresses(Config.SERVER))
+        ) {
+            String cacheName = "PersonCache";
+
+            ClientCacheConfiguration cacheConfig = new ClientCacheConfiguration()
+                    .setName("complexKeyComplexValCache")
+                    .setQueryEntities(new QueryEntity(Integer.class, Person.class)
+                            .setTableName("Person")
+                    )
+                    .setSqlSchema("PUBLIC");
+
+            ClientCache<Integer, Person> cache = client.getOrCreateCache(cacheConfig);
+
+            cache.put(2, new Person(2, "Person 2"));
+
+            assertEquals("Person 2", cache.get(2).getName());
+
+            assertEquals("Person 2", client.query(
+                    new SqlFieldsQuery("SELECT name FROM PUBLIC.Person WHERE id = 2")).getAll().get(0).get(0));
+        }
+    }
+
+    @Test
+    public void differentApproachToCreateTableTest() throws Exception {
+        final String TABLE_NAME = "SqlTable";
+
+        try (Ignite ignored = Ignition.start(Config.getServerConfiguration());
+             IgniteClient client = Ignition.startClient(
+                     new ClientConfiguration()
+                             .setBinaryConfiguration(
+                                     new BinaryConfiguration().setCompactFooter(true)
+                             )
+                             .setAddresses(Config.SERVER))
+        ) {
+            // Creating a table using JDBC.
+            try (Connection conn = DriverManager.getConnection("jdbc:ignite:thin://localhost:10800/PUBLIC")) {
+                conn.prepareStatement("CREATE TABLE IF NOT EXISTS SqlTable (id int, name varchar, PRIMARY KEY (id)) " +
+                        "WITH \"atomicity=transactional,template=partitioned,CACHE_NAME=SqlTable,wrap_value=false\"")
+                        .execute();
+
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+            }
+
+            final ClientCache<Integer, String> cache = client.cache(TABLE_NAME);
+            cache.put(5, "value of column name field 5");
+
+            assertEquals(1, cache.size());
+            assertEquals("value of column name field 5", cache.get(5));
+            // No record is visible to SQL.
+            assertEquals(1,
+                    cache.query(new SqlFieldsQuery("select count(*) from " + TABLE_NAME )).getAll().get(0).get(0));
+        }
     }
 }
